@@ -1,0 +1,4 @@
+build/
+dist/
+hosts/*.mk
+!hosts/example.mk
