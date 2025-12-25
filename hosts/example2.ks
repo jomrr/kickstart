@@ -1,11 +1,11 @@
 #version=
 #
 # =============================================================================
-# file: hosts/example1.ks
+# file: hosts/example2.ks
 # desc: host specific kickstart snippet
 # =============================================================================
 #
 # hostname
-network --hostname=example1.mauer.in
+network --hostname=example2.mauer.in
 # include profile to use
 %include profiles/fedora-vm-btrfs.ks
