@@ -23,4 +23,4 @@
 # - iommu=force
 # - iommu.strict=1
 
-bootloader --driveorder=sda --append="${KS_KERNEL_CMDLINE_CPU_AMD} ${KS_KERNEL_CMDLINE_BASE} ${KS_KERNEL_CMDLINE_METAL}"  --password ${KS_GRUB_PASSWORD_HASH} --iscrypted
+bootloader --driveorder=${KS_INSTALL_DISK} --append="${KS_KERNEL_CMDLINE_CPU_AMD} ${KS_KERNEL_CMDLINE_BASE} ${KS_KERNEL_CMDLINE_METAL}"  --password ${KS_GRUB_PASSWORD_HASH}

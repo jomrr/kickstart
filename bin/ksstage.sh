@@ -4,7 +4,7 @@ set -euo pipefail
 # Stage a Kickstart source file into a host-specific build tree.
 #
 # Behavior:
-# - Load hosts/common.env first when present.
+# - Load hosts/default.env first when present.
 # - Load hosts/<host>.env afterwards when present, allowing host-specific
 #   values to override common defaults.
 # - Restrict envsubst to currently defined KS_* variables after sourcing.
@@ -57,8 +57,8 @@ build_shell_format() {
     printf '%s\n' "${format_string}"
 }
 
-if [[ -f "${hosts_dir}/common.env" ]]; then
-    env_files+=("${hosts_dir}/common.env")
+if [[ -f "${hosts_dir}/default.env" ]]; then
+    env_files+=("${hosts_dir}/default.env")
 fi
 
 if [[ -f "${hosts_dir}/${host_name}.env" ]]; then

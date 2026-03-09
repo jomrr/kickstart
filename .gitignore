@@ -1,4 +1,5 @@
 build/
 dist/
 hosts/*.env
+!hosts/default.env
 !hosts/example-*.env
