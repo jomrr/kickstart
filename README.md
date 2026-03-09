@@ -168,8 +168,8 @@ make example-vm-core-grub VALIDATE=0
 For local installation testing, the repository also provides VM test targets for hosts named `example-*`:
 
 ```bash
-make test
-make test-example-vm-core-grub
+make test                      # test all example-* hosts with virt-install
+make test-example-vm-core-grub # test host example-vm-core-grub from hosts/example-vm-core-grub.{env,ks}
 ```
 
 `bin/test.sh` boots a Fedora installer via virt-install, injects the generated Kickstart file into the initrd, enables UEFI Secure Boot, and attaches a software TPM. This is intended for local validation of the example host definitions.
