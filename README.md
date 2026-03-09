@@ -165,7 +165,7 @@ Disabled explicitly:
 make example-vm-core-grub VALIDATE=0
 ```
 
-For local installation testing, the repository also provides VM test targets for example hosts:
+For local installation testing, the repository also provides VM test targets for hosts named `example-*`:
 
 ```bash
 make test
