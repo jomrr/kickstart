@@ -156,13 +156,13 @@ Kickstart validation via `ksvalidator` is optional and enabled by default.
 Enabled by default:
 
 ```bash
-make example1
+make example-vm-core-grub
 ```
 
 Disabled explicitly:
 
 ```bash
-make example1 VALIDATE=0
+make example-vm-core-grub VALIDATE=0
 ```
 
 For local installation testing, the repository also provides VM test targets for example hosts:
