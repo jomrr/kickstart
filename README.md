@@ -11,7 +11,7 @@ This repository provides a **non-recursive GNU Make–based workflow** that:
 - optionally validates the final result with `ksvalidator`,
 - and rebuilds **only what is actually affected by changes**.
 
-The goal is correctness, reproducibility, and a clean, inspectable dependency graph — not hidden templating magic.
+The goal is correctness, reproducibility, and a clean, inspectable dependency graph.
 
 ---
 
