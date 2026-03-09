@@ -1,198 +1,436 @@
 #!/usr/bin/env python3
 """
 Generate Makefile dependency fragments for Kickstart %include/%ksappend graphs.
+
+The tool walks the include graph of a Kickstart host entry, resolves logical
+include paths, maps them to host-specific staged build targets under
+build/<host>/..., and emits a Makefile fragment with two rules:
+
+1. A self-dependency for build/<host>/deps.mk on the current source graph.
+2. A dependency for dist/<host>.ks on the staged host-specific build graph.
+
+All paths emitted into the Makefile fragment are absolute paths so they match a
+Makefile that uses $(CURDIR)-based directory variables.
 """
+
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
-# Parse Kickstart directives that pull other files into the graph.
-RE = re.compile(r"^\s*%(include|ksappend)\s+(\S+)\s*$")
+INCLUDE_DIRECTIVE_RE = re.compile(r"^\s*%(include|ksappend)\s+(\S+)\s*$")
+ROOT_RELATIVE_PREFIXES = ("snippets/", "profiles/", "hosts/")
 
 
 @dataclass
 class WalkContext:
-    """Shared context for walking the Kickstart include dependency graph."""
+    """
+    Shared context for walking a Kickstart include dependency graph.
+
+    Attributes:
+        cwd: Repository root directory.
+        host_name: Host stem used to derive the host-specific build tree.
+        build_dir: Host-specific build root, for example build/example0.
+        source_deps: Collected source file dependencies as absolute paths.
+        staged_deps: Collected staged build targets as absolute paths.
+    """
+
     cwd: Path
+    host_name: str
     build_dir: Path
-    deps_out: set[Path]
-
-
-def is_url(s: str) -> bool:
-    """
-    Return True if the given string looks like an absolute URL.
-
-    A string is considered a URL if it has a scheme and network location
-    as parsed by urllib.parse.urlparse().
-    """
-    u = urlparse(s)
-    return bool(u.scheme and u.netloc)
+    source_deps: set[Path]
+    staged_deps: set[Path]
 
 
 class IncludeError(Exception):
     """Raised when a Kickstart %include or %ksappend cannot be resolved."""
 
 
+def is_url(value: str) -> bool:
+    """
+    Return whether the given value appears to be an absolute URL.
+
+    Args:
+        value: Raw include value from the Kickstart file.
+
+    Returns:
+        True if the value looks like an absolute URL, otherwise False.
+    """
+    parsed = urlparse(value)
+    return bool(parsed.scheme and parsed.netloc)
+
+
+def validate_host_name(host_name: str) -> str:
+    """
+    Validate the host name passed on the command line.
+
+    The accepted format is a plain stem without path separators and without a
+    '.ks' suffix.
+
+    Args:
+        host_name: Raw host name argument.
+
+    Returns:
+        The validated host name.
+
+    Raises:
+        IncludeError: The host name is not a plain stem.
+    """
+    if Path(host_name).name != host_name or host_name.endswith(".ks"):
+        raise IncludeError(
+            "Host name must be passed as a plain stem without path or suffix."
+        )
+
+    return host_name
+
+
 def resolve_source_for_logical_include(child_ks: Path) -> Path:
     """
-    Resolve a logical include path to a *source* file we can read for recursion.
+    Resolve a logical include path to the source file used for recursive parsing.
 
-    Convention:
-      - Kickstart includes reference *.ks (logical include path).
-      - The repository may store either:
-          - snippets/foo.ks        (plain file)
-          - snippets/foo.ks.in     (templated file)
-        In that case, the logical include is snippets/foo.ks and the source to read
-        is either foo.ks (preferred) or foo.ks.in (fallback).
+    Resolution policy:
+    - Prefer the logical file itself, for example: snippets/foo.ks
+    - Fall back to a templated source file, for example: snippets/foo.ks.in
+
+    Args:
+        child_ks: Logical include path ending in .ks.
+
+    Returns:
+        The existing source file path used for recursion.
+
+    Raises:
+        IncludeError: The logical include and its .in fallback are both missing.
     """
     if child_ks.exists():
-        return child_ks
+        return child_ks.resolve()
 
-    # If the logical include does not exist, allow a .in template as source-of-truth.
-    child_in = child_ks.with_suffix(child_ks.suffix + ".in")  # foo.ks -> foo.ks.in
-    if child_in.exists():
-        return child_in
+    child_template = child_ks.with_suffix(f"{child_ks.suffix}.in")
+    if child_template.exists():
+        return child_template.resolve()
 
-    raise IncludeError(f"Missing include file: {child_ks} (or template {child_in})")
+    raise IncludeError(
+        f"Missing include file: {child_ks} "
+        f"(or template fallback {child_template})"
+    )
 
 
-def normalize_inc(parent: Path, inc: str, cwd: Path) -> Path:
+def normalize_include_path(parent_dir: Path, include_value: str, cwd: Path) -> Path:
     """
-    Normalize an include path found in a file.
+    Normalize an include path found in a Kickstart file.
 
     Policy:
-      - No URLs
-      - No absolute paths
-      - Paths are either:
-          * repo-root relative (preferred) for well-known top-level dirs like
-            snippets/, profiles/, hosts/
-          * or file-parent relative for everything else (portable for local includes)
+    - URLs are rejected.
+    - Absolute paths are rejected.
+    - Includes below well-known top-level directories are resolved relative to
+      the repository root.
+    - All other includes are resolved relative to the including file.
+
+    Args:
+        parent_dir: Directory of the including file.
+        include_value: Raw include argument from the Kickstart directive.
+        cwd: Repository root directory.
+
+    Returns:
+        The normalized absolute path for the logical include.
+
+    Raises:
+        IncludeError: The include is a URL or absolute path.
     """
-    if is_url(inc):
-        raise IncludeError(f"URL not allowed in source includes/ksappends: {inc}")
-    if inc.startswith("/"):
-        raise IncludeError(f"Absolute path not allowed in source includes/ksappends: {inc}")
+    if is_url(include_value):
+        raise IncludeError(
+            f"URL not allowed in source includes/ksappends: {include_value}"
+        )
 
-    # Treat these as repo-root relative paths to avoid "../" gymnastics in templates.
-    if inc.startswith(("snippets/", "profiles/", "hosts/")):
-        return (cwd / inc).resolve()
+    if include_value.startswith("/"):
+        raise IncludeError(
+            f"Absolute path not allowed in source includes/ksappends: "
+            f"{include_value}"
+        )
 
-    # Default: resolve relative to including file's directory.
-    return (parent / inc).resolve()
+    if include_value.startswith(ROOT_RELATIVE_PREFIXES):
+        return (cwd / include_value).resolve()
+
+    return (parent_dir / include_value).resolve()
 
 
-def staged_target_for_logical_include(child_ks: Path, cwd: Path, build_dir: Path) -> Path:
+def ensure_within_repo_root(path_value: Path, cwd: Path) -> None:
     """
-    Map a logical include path (e.g., snippets/foo.ks) to its staged build target
-    (e.g., build/snippets/foo.ks).
+    Validate that the given path is located inside the repository root.
 
-    For safety, only map paths that are within the repo checkout.
+    Args:
+        path_value: Path to validate.
+        cwd: Repository root directory.
+
+    Raises:
+        IncludeError: The path escapes the repository root.
     """
-    rel_path = child_ks.resolve().relative_to(cwd.resolve())
-    return (build_dir / rel_path).resolve()
+    try:
+        path_value.resolve().relative_to(cwd.resolve())
+    except ValueError as exc:
+        raise IncludeError(
+            f"Include escapes repository root: {path_value}"
+        ) from exc
+
+
+def staged_target_for_logical_include(child_ks: Path, ctx: WalkContext) -> Path:
+    """
+    Map a logical include path to its host-specific staged build target path.
+
+    Examples:
+        snippets/foo.ks -> /repo/build/<host>/snippets/foo.ks
+        profiles/base.ks -> /repo/build/<host>/profiles/base.ks
+
+    The current host entry file is staged as /repo/build/<host>/host.ks.
+    References to other files below hosts/ are rejected because the staging
+    model keeps a single host entry point per host-specific build tree.
+
+    Args:
+        child_ks: Logical include path inside the repository.
+        ctx: Shared walk context.
+
+    Returns:
+        Absolute staged target path under build/<host>/...
+
+    Raises:
+        IncludeError: A hosts/ include references a different host file.
+    """
+    rel_path = child_ks.resolve().relative_to(ctx.cwd.resolve())
+
+    if rel_path.parts[0] == "hosts":
+        expected_rel = Path("hosts") / f"{ctx.host_name}.ks"
+        if rel_path != expected_rel:
+            raise IncludeError(
+                "Only the current host entry may be referenced below hosts/: "
+                f"{rel_path}"
+            )
+        return (ctx.build_dir / "host.ks").resolve()
+
+    return (ctx.build_dir / rel_path).resolve()
 
 
 def walk(file_src: Path, ctx: WalkContext, stack: list[Path]) -> None:
-    """Walk the %include/%ksappend dependency graph starting from file_src."""
-    file_src = file_src.resolve()
+    """
+    Walk the Kickstart %include/%ksappend dependency graph recursively.
 
-    if file_src in stack:
-        cycle = " -> ".join(p.name for p in (stack + [file_src]))
+    Args:
+        file_src: Source file to inspect.
+        ctx: Shared walk context.
+        stack: Current include recursion stack used for cycle detection.
+
+    Raises:
+        IncludeError: A cycle is detected or an include cannot be resolved.
+    """
+    resolved_file = file_src.resolve()
+
+    if resolved_file in stack:
+        cycle = " -> ".join(path_item.name for path_item in (stack + [resolved_file]))
         raise IncludeError(f"Include cycle detected: {cycle}")
 
-    if not file_src.exists():
-        raise IncludeError(f"Missing include file: {file_src}")
+    if not resolved_file.exists():
+        raise IncludeError(f"Missing include file: {resolved_file}")
 
-    stack.append(file_src)
+    ctx.source_deps.add(resolved_file)
+    stack.append(resolved_file)
 
-    text = file_src.read_text(encoding="utf-8", errors="strict")
-    for lineno, line in enumerate(text.splitlines(), start=1):
-        m = RE.match(line)
-        if not m:
+    file_text = resolved_file.read_text(encoding="utf-8", errors="strict")
+    for lineno, line in enumerate(file_text.splitlines(), start=1):
+        match = INCLUDE_DIRECTIVE_RE.match(line)
+        if match is None:
             continue
 
-        inc_raw = m.group(2)
+        include_value = match.group(2)
 
         try:
-            child_logical = normalize_inc(file_src.parent, inc_raw, ctx.cwd)
-        except IncludeError as e:
-            raise IncludeError(f"{file_src}:{lineno}: {e}") from e
+            child_logical = normalize_include_path(
+                resolved_file.parent,
+                include_value,
+                ctx.cwd,
+            )
+            ensure_within_repo_root(child_logical, ctx.cwd)
+            staged_target = staged_target_for_logical_include(child_logical, ctx)
+        except IncludeError as exc:
+            raise IncludeError(f"{resolved_file}:{lineno}: {exc}") from exc
 
-        try:
-            child_logical.resolve().relative_to(ctx.cwd.resolve())
-        except ValueError as e:
-            raise IncludeError(
-                f"{file_src}:{lineno}: Include escapes repo root: {child_logical}"
-            ) from e
-
-        ctx.deps_out.add(
-            staged_target_for_logical_include(child_logical, ctx.cwd, ctx.build_dir)
-        )
+        ctx.staged_deps.add(staged_target)
 
         try:
             child_src = resolve_source_for_logical_include(child_logical)
             walk(child_src, ctx, stack)
-        except IncludeError as e:
-            raise IncludeError(f"{file_src}:{lineno}: {e}") from e
+        except IncludeError as exc:
+            raise IncludeError(f"{resolved_file}:{lineno}: {exc}") from exc
 
     stack.pop()
 
 
+def render_make_fragment(
+    depfile_path: Path,
+    depfile_dependencies: set[Path],
+    dist_target: Path,
+    staged_dependencies: set[Path],
+) -> str:
+    """
+    Render the final Makefile dependency fragment content.
+
+    Args:
+        depfile_path: Absolute path of the generated depfile.
+        depfile_dependencies: Source dependencies that trigger depfile refresh.
+        dist_target: Absolute final dist target path.
+        staged_dependencies: Absolute staged build targets required for dist.
+
+    Returns:
+        Makefile fragment text with trailing newlines.
+    """
+    depfile_deps_sorted = sorted(depfile_dependencies, key=str)
+    staged_deps_sorted = sorted(staged_dependencies, key=str)
+
+    depfile_deps_line = " ".join(str(path_item) for path_item in depfile_deps_sorted)
+    staged_deps_line = " ".join(str(path_item) for path_item in staged_deps_sorted)
+
+    return (
+        f"{depfile_path}: {depfile_deps_line}\n"
+        f"{dist_target}: {staged_deps_line}\n"
+    )
+
+
+def write_text_atomic(path_value: Path, content: str) -> None:
+    """
+    Write text to a file atomically inside the destination directory.
+
+    The content is first written to a temporary file in the destination
+    directory, then published via os.replace().
+
+    Args:
+        path_value: Final destination path.
+        content: Text content to write.
+    """
+    path_value.parent.mkdir(parents=True, exist_ok=True)
+
+    file_descriptor: int | None = None
+    tmp_path_str: str | None = None
+
+    try:
+        file_descriptor, tmp_path_str = tempfile.mkstemp(
+            prefix=f".{path_value.name}.",
+            suffix=".tmp",
+            dir=path_value.parent,
+            text=True,
+        )
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as handle:
+            file_descriptor = None
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+
+        os.replace(tmp_path_str, path_value)
+        tmp_path_str = None
+    finally:
+        if file_descriptor is not None:
+            os.close(file_descriptor)
+        if tmp_path_str is not None:
+            try:
+                Path(tmp_path_str).unlink()
+            except FileNotFoundError:
+                pass
+
+
+def update_output_file(out_path: Path, content: str) -> None:
+    """
+    Update the output Make fragment.
+
+    Behavior:
+    - If the output file already exists and the content is unchanged, the file
+      is not rewritten.
+    - If the content differs or the file does not exist, the file is rewritten
+      atomically.
+    - The output file mtime is always refreshed at the end so remade included
+      Makefiles remain current from Make's point of view.
+
+    Args:
+        out_path: Output Make fragment path.
+        content: Final content to persist.
+    """
+    existing_content: str | None = None
+    if out_path.exists():
+        existing_content = out_path.read_text(encoding="utf-8")
+
+    if existing_content != content:
+        write_text_atomic(out_path, content)
+
+    out_path.touch(exist_ok=True)
+
+
+def parse_args() -> argparse.Namespace:
+    """
+    Parse command-line arguments.
+
+    Returns:
+        Parsed argument namespace.
+    """
+    parser = argparse.ArgumentParser(
+        description=(
+            "Generate a Make include fragment for Kickstart "
+            "%include/%ksappend dependencies."
+        )
+    )
+    parser.add_argument(
+        "host_name",
+        help="Kickstart host name without path or suffix, for example example0.",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
     """
-    Generate a Makefile dependency fragment for a Kickstart profile.
+    Generate a Makefile dependency fragment for a Kickstart host entry.
 
-    Walks the %include/%ksappend graph starting from the given profile source,
-    resolves logical includes to staged build targets under the build directory,
-    and emits a Makefile fragment that attaches all required dependencies to the
-    specified target.
+    Returns:
+        Process exit code. Zero indicates success.
+
+    Raises:
+        IncludeError: A Kickstart include cannot be resolved safely.
     """
-    ap = argparse.ArgumentParser(
-        description="Generate a Make include (.mk) for Kickstart %include/%ksappend dependencies."
-    )
-    ap.add_argument("--profile", required=True, help="Kickstart profile source (entry point), typically *.ks.in")
-    ap.add_argument("--target", required=True, help="Make target to attach dependencies to (e.g. dist/*.ks).")
-    ap.add_argument("--out-mk", required=True, help="Output Make fragment path (e.g. build/deps/*.mk).")
-    ap.add_argument("--cwd", default=".", help="Repository root for relative path emission.")
-    ap.add_argument(
-        "--build-dir",
-        required=True,
-        help="Build directory root (e.g. build). Staged targets are emitted under this directory.",
-    )
-    args = ap.parse_args()
+    args = parse_args()
 
-    cwd = Path(args.cwd).resolve()
-    build_dir = Path(args.build_dir).resolve()
-    profile_src = Path(args.profile).resolve()
-    out_mk = Path(args.out_mk).resolve()
+    cwd = Path.cwd().resolve()
+    host_name = validate_host_name(args.host_name)
 
-    # Walk include graph from profile source.
+    build_dir = (cwd / "build" / host_name).resolve()
+    profile_src = (cwd / "hosts" / f"{host_name}.ks").resolve()
+    out_mk = (build_dir / "deps.mk").resolve()
+    dist_target = (cwd / "dist" / f"{host_name}.ks").resolve()
+
+    if not profile_src.exists():
+        raise IncludeError(f"Missing host entry file: {profile_src}")
+
     ctx = WalkContext(
         cwd=cwd,
+        host_name=host_name,
         build_dir=build_dir,
-        deps_out=set(),
+        source_deps=set(),
+        staged_deps=set(),
     )
+
     walk(profile_src, ctx, [])
 
-    # add staged entry file itself as dependency
-    try:
-        prof_rel = profile_src.resolve().relative_to(cwd.resolve())
-    except ValueError as e:
-        raise IncludeError(f"Profile is outside repo root: {profile_src}") from e
+    # Add the current host entry explicitly to the staged target set.
+    ctx.staged_deps.add((build_dir / "host.ks").resolve())
 
-    ctx.deps_out.add((build_dir / prof_rel).resolve())
+    depfile_dependencies = set(ctx.source_deps)
+    depfile_dependencies.add((cwd / "bin" / "ksdeps.py").resolve())
 
-    deps_sorted = sorted(ctx.deps_out, key=str)
-    deps_line = " ".join(str(p) for p in deps_sorted)
-    content = f"{args.target}: {deps_line}\n"
-
-    out_mk.parent.mkdir(parents=True, exist_ok=True)
-    out_mk.write_text(content, encoding="utf-8")
+    content = render_make_fragment(
+        depfile_path=out_mk,
+        depfile_dependencies=depfile_dependencies,
+        dist_target=dist_target,
+        staged_dependencies=ctx.staged_deps,
+    )
+    update_output_file(out_mk, content)
 
     return 0
 
@@ -200,6 +438,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except IncludeError as e:
-        print(f"ksdeps: error: {e}", file=sys.stderr)
-        raise SystemExit(2) from e
+    except IncludeError as exc:
+        print(f"ksdeps: error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc

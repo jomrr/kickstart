@@ -1,4 +1,4 @@
 build/
 dist/
-hosts/*.mk
-!hosts/example.mk
+hosts/*.env
+!hosts/example-*.env

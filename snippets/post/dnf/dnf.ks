@@ -1,6 +1,7 @@
-# DNF Configuration
+# vim:  set ft=kickstart
+# file: snippets/post/dnf.ks
 
-%post --interpreter /usr/bin/bash --log=/root/ks-post-dnf.log
+%post --interpreter /usr/bin/bash --log=/root/install/ks-post-dnf.log
 cp -a /etc/dnf/dnf.conf /etc/dnf/dnf.conf.rpm
 
 cat << EOF > /etc/dnf/dnf.conf
@@ -12,14 +13,14 @@ defaultyes=False
 fastestmirror=True
 gpgcheck=True
 gpgkey_dns_verification=False
-installonly_limit=2
+installonly_limit=3
 install_weak_deps=False
 keepcache=False
-localpkg_gpgcheck=False
+localpkg_gpgcheck=True
 max_parallel_downloads=10
-metadata_expire=43200
+metadata_expire=3600
 repo_gpgcheck=True
-skip_if_unavailable=True
-tsflasg=nodocs
+skip_if_unavailable=False
+tsflags=nodocs
 EOF
 %end

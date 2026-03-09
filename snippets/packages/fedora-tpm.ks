@@ -1,0 +1,7 @@
+# vim:  set ft=kickstart
+# file: snippets/packages/fedora-tpm.ks
+
+%packages --exclude-weakdeps --excludedocs --ignoremissing --inst-langs de_DE,en_US
+tpm2-tools
+tpm2-tss
+%end
