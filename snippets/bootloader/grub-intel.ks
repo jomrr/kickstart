@@ -23,4 +23,4 @@
 # - iommu=force
 # - iommu.strict=1
 
-bootloader --driveorder=${KS_INSTALL_DISK} --append="${KS_KERNEL_CMDLINE_CPU_INTEL} ${KS_KERNEL_CMDLINE_BASE} ${KS_KERNEL_CMDLINE_METAL}" --password ${KS_GRUB_PASSWORD}
+bootloader --driveorder=${KS_INSTALL_DISK} --append="${KS_KERNEL_CMDLINE_CPU_INTEL} ${KS_KERNEL_CMDLINE_BASE} ${KS_KERNEL_CMDLINE_METAL}" --password ${KS_GRUB_PW}

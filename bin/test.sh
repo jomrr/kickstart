@@ -72,7 +72,7 @@ os_variant="${OS_VARIANT:-fedora41}"
 memory_mb="${MEMORY_MB:-8192}"
 vcpus="${VCPUS:-4}"
 disk_gib="${DISK_GIB:-32}"
-disk_pool="${DISK_POOL:-default}"
+#disk_pool="${DISK_POOL:-default}"
 network_name="${NETWORK_NAME:-default}"
 mac_address="${MAC_ADDRESS:-$(generate_mac_address "${host_name}")}"
 

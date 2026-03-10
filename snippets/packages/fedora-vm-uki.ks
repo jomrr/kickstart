@@ -19,6 +19,6 @@ openssl
 python3-virt-firmware
 sbsigntools
 systemd-ukify
-# no uki-direct, we use custom cmdline and need own post install hook
+# no uki-direct, we use custom cmdline and need own kernel install hook
 -uki-direct
 %end
