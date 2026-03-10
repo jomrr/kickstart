@@ -28,7 +28,7 @@ declare os_variant
 declare memory_mb
 declare vcpus
 declare disk_gib
-declare disk_pool
+#declare disk_pool
 declare network_name
 declare mac_address
 
