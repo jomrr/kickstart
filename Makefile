@@ -99,7 +99,7 @@ $(HOSTS:%=validate-%): validate-%: $(BUILDDIR)/%/validate.log
 # -----------------------------------------------------------------------------
 # Generate one depfile per host. The depfile contains only exact source
 # dependencies, not build logic.
-$(BUILDDIR)/%/deps.mk: $(HOSTSDIR)/%.ks $(HOSTSDIR)/default.env $(HOST_ENVS) $(KSDEPS) | $(BUILDDIR)/%/
+$(BUILDDIR)/%/deps.mk: $(HOSTSDIR)/%.ks $(KSDEPS) | $(BUILDDIR)/%/
 	@echo "build/$*/deps.mk: building dependencies"
 	@python3 $(KSDEPS) "$*"
 

@@ -257,13 +257,7 @@ def main() -> int:
     content = render_make_fragment(depfile_path, flat_target, source_deps, tool_path)
 
     depfile_path.parent.mkdir(parents=True, exist_ok=True)
-
-    old_content = None
-    if depfile_path.exists():
-        old_content = depfile_path.read_text(encoding="utf-8")
-
-    if old_content != content:
-        depfile_path.write_text(content, encoding="utf-8")
+    depfile_path.write_text(content, encoding="utf-8")
 
     return 0
 
