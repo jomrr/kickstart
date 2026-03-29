@@ -39,13 +39,6 @@ TEST_HOSTS      := $(basename $(notdir $(wildcard $(HOSTSDIR)/example*.ks)))
 PROFILE_STAGE_FILES := $(shell find "$(PROFILESDIR)" -type f -name '*.ksi' -printf '%P\n')
 SNIPPET_STAGE_FILES := $(shell find "$(SNIPPETSDIR)" -type f -name '*.ksi' -printf '%P\n')
 
-# Resolve a logical stage file to the preferred source file.
-profile_src = $(PROFILESDIR)/$(1)
-snippet_src = $(SNIPPETSDIR)/$(1)
-
-# Return the relative subdirectory of a file or an empty string for the root.
-stage_subdir = $(patsubst $(CURDIR)/,,$(dir $(1)))
-
 # -----------------------------------------------------------------------------
 # Generic directory rule
 # -----------------------------------------------------------------------------
@@ -159,22 +152,26 @@ endef
 # Staging policy:
 # - Prefer plain *.ksi sources.
 # - Keep staging logic explicit and deterministic.
-define HOST_ROOT_STAGE_RULE
-HOST_ENV_DEPS_$(1) := $(HOSTSDIR)/default.env $(wildcard $(HOSTSDIR)/$(1).env)
 
-$(BUILDDIR)/$(1)/staged/host.ks: $(HOSTSDIR)/$(1).ks $$(HOST_ENV_DEPS_$(1)) | $(BUILDDIR)/$(1)/staged/
+# Return the list of environment file dependencies for a host.
+host_env_deps = $(HOSTSDIR)/default.env $(wildcard $(HOSTSDIR)/$(1).env)
+# Return the relative subdirectory of a file or an empty string for the root.
+stage_subdir = $(patsubst $(CURDIR)/,,$(dir $(1)))
+
+define HOST_ROOT_STAGE_RULE
+$(BUILDDIR)/$(1)/staged/host.ks: $(HOSTSDIR)/$(1).ks $(call host_env_deps,$(1)) | $(BUILDDIR)/$(1)/staged/
 	@echo "build/$(1)/staged/host.ks: staging host entry"
 	@$(call stage_recipe,$(1))
 endef
 
 define HOST_PROFILE_STAGE_RULE
-$(BUILDDIR)/$(1)/staged/profiles/$(2): $(call profile_src,$(2)) $$(HOST_ENV_DEPS_$(1)) | $(BUILDDIR)/$(1)/staged/profiles/$(call stage_subdir,$(2))
+$(BUILDDIR)/$(1)/staged/profiles/$(2): $(PROFILESDIR)/$(2) $(call host_env_deps,$(1)) | $(BUILDDIR)/$(1)/staged/profiles/$(call stage_subdir,$(2))
 	@echo "build/$(1)/staged/profiles/$(2): staging profile"
 	@$(call stage_recipe,$(1))
 endef
 
 define HOST_SNIPPET_STAGE_RULE
-$(BUILDDIR)/$(1)/staged/snippets/$(2): $(call snippet_src,$(2)) $$(HOST_ENV_DEPS_$(1)) | $(BUILDDIR)/$(1)/staged/snippets/$(call stage_subdir,$(2))
+$(BUILDDIR)/$(1)/staged/snippets/$(2): $(SNIPPETSDIR)/$(2) $(call host_env_deps,$(1)) | $(BUILDDIR)/$(1)/staged/snippets/$(call stage_subdir,$(2))
 	@echo "build/$(1)/staged/snippets/$(2): staging snippet"
 	@$(call stage_recipe,$(1))
 endef
@@ -206,8 +203,7 @@ $(BUILDDIR)/%/flat.ks: $(BUILDDIR)/%/deps.mk $(BUILDDIR)/%/ks.version | $(BUILDD
 # -----------------------------------------------------------------------------
 $(BUILDDIR)/%/validate.log: $(BUILDDIR)/%/flat.ks $(BUILDDIR)/%/ks.version | $(BUILDDIR)/%/
 	@echo "build/$*/validate.log: validating kickstart"
-	@ksvalidator -v "$$(cat "$(BUILDDIR)/$*/ks.version")" "$<" 2>&1 1> "$@" || \
-		(echo "build/$*/validate.log: validation failed" && exit 1)
+	@ksvalidator -v "$$(cat "$(BUILDDIR)/$*/ks.version")" "$<" 2>&1 1> "$@"
 	@echo "build/$*/validate.log: validation completed."
 
 # -----------------------------------------------------------------------------
