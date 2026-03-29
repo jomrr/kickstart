@@ -6,10 +6,6 @@ MAKEFLAGS       += --warn-undefined-variables
 SHELL           := /usr/bin/bash
 .SHELLFLAGS     := -euo pipefail -c
 
-.DEFAULT_GOAL   := all
-.DELETE_ON_ERROR:
-.SECONDARY:
-
 # -----------------------------------------------------------------------------
 # User-configurable variables
 # -----------------------------------------------------------------------------
@@ -27,17 +23,33 @@ BUILDDIR        := $(CURDIR)/build
 DISTDIR         := $(CURDIR)/dist
 
 # -----------------------------------------------------------------------------
+# Helper tools
+# -----------------------------------------------------------------------------
+KSDEPS          := $(BINDIR)/ksdeps.py
+KSSTAGE         := $(BINDIR)/ksstage.py
+
+# -----------------------------------------------------------------------------
 # Host inventory
 # -----------------------------------------------------------------------------
 HOSTS           := $(basename $(notdir $(wildcard $(HOSTSDIR)/*.ks)))
 TEST_HOSTS      := $(basename $(notdir $(wildcard $(HOSTSDIR)/example*.ks)))
 
 # -----------------------------------------------------------------------------
-# Source inventory for explicit staging rules
+# Source inventory
 # -----------------------------------------------------------------------------
-# Collect all logical profile and snippet stage targets.
-PROFILE_STAGE_FILES := $(sort $(shell find "$(PROFILESDIR)" -type f -name '*.ksi' -printf '%P\n'))
-SNIPPET_STAGE_FILES := $(sort $(shell find "$(SNIPPETSDIR)" -type f -name '*.ksi' -printf '%P\n'))
+# Existing per-host dependency fragments are included only when they already
+# exist. They are never created during parse time.
+HOST_ENVS       := $(wildcard $(HOSTSDIR)/*.env)
+
+# -----------------------------------------------------------------------------
+# Makefile settings
+# -----------------------------------------------------------------------------
+.DEFAULT_GOAL   := all
+.DELETE_ON_ERROR:
+
+# Keep generated directories and host version files.
+.PRECIOUS: %/
+.SECONDARY: $(HOSTS:%=$(BUILDDIR)/%/ks.version)
 
 # -----------------------------------------------------------------------------
 # Generic directory rule
@@ -50,6 +62,14 @@ SNIPPET_STAGE_FILES := $(sort $(shell find "$(SNIPPETSDIR)" -type f -name '*.ksi
 # -----------------------------------------------------------------------------
 # Main targets
 # -----------------------------------------------------------------------------
+.PHONY: deps
+# Generate all per-host dependency fragments explicitly.
+deps: $(HOSTS:%=$(BUILDDIR)/%/deps.mk)
+
+.PHONY: stage
+# Stage all hosts explicitly.
+stage: $(HOSTS:%=$(BUILDDIR)/%/staged/host.ks)
+
 .PHONY: all
 # Build all published Kickstart files.
 all: $(HOSTS:%=$(DISTDIR)/%.ks)
@@ -75,113 +95,25 @@ $(HOSTS:%=flat-%): flat-%: $(BUILDDIR)/%/flat.ks
 $(HOSTS:%=validate-%): validate-%: $(BUILDDIR)/%/validate.log
 
 # -----------------------------------------------------------------------------
-# Requested host selection for depfile inclusion
-# -----------------------------------------------------------------------------
-# Only include depfiles for the hosts that are actually needed.
-REQUESTED_GOALS := $(if $(MAKECMDGOALS),$(MAKECMDGOALS),all)
-
-HOSTS_FROM_HOST_GOALS      := $(filter $(HOSTS),$(REQUESTED_GOALS))
-HOSTS_FROM_FLAT_GOALS      := $(patsubst flat-%,%,$(filter flat-%,$(REQUESTED_GOALS)))
-HOSTS_FROM_VALIDATE_GOALS  := $(patsubst validate-%,%,$(filter validate-%,$(REQUESTED_GOALS)))
-HOSTS_FROM_TEST_GOALS      := $(patsubst test-%,%,$(filter test-%,$(REQUESTED_GOALS)))
-
-HOSTS_FROM_FLAT_SUITE      := $(if $(filter flat,$(REQUESTED_GOALS)),$(HOSTS),)
-HOSTS_FROM_VALIDATE_SUITE  := $(if $(filter validate,$(REQUESTED_GOALS)),$(HOSTS),)
-HOSTS_FROM_TEST_SUITE      := $(if $(filter test,$(REQUESTED_GOALS)),$(TEST_HOSTS),)
-
-HOSTS_FROM_DIST_TARGETS    := $(patsubst $(DISTDIR)/%.ks,%,$(filter $(DISTDIR)/%.ks,$(REQUESTED_GOALS)))
-HOSTS_FROM_FLAT_TARGETS    := $(patsubst $(BUILDDIR)/%/flat.ks,%,$(filter $(BUILDDIR)/%/flat.ks,$(REQUESTED_GOALS)))
-HOSTS_FROM_VALIDATE_TARGETS := $(patsubst $(BUILDDIR)/%/validate.log,%,$(filter $(BUILDDIR)/%/validate.log,$(REQUESTED_GOALS)))
-
-HOSTS_SEL := $(sort \
-	$(HOSTS_FROM_HOST_GOALS) \
-	$(HOSTS_FROM_FLAT_GOALS) \
-	$(HOSTS_FROM_VALIDATE_GOALS) \
-	$(HOSTS_FROM_TEST_GOALS) \
-	$(HOSTS_FROM_FLAT_SUITE) \
-	$(HOSTS_FROM_VALIDATE_SUITE) \
-	$(HOSTS_FROM_TEST_SUITE) \
-	$(HOSTS_FROM_DIST_TARGETS) \
-	$(HOSTS_FROM_FLAT_TARGETS) \
-	$(HOSTS_FROM_VALIDATE_TARGETS))
-
-# -----------------------------------------------------------------------------
 # Generated dependency fragments
 # -----------------------------------------------------------------------------
-# ksdeps.py derives:
-# - source entry: hosts/<host>.ks
-# - build root:   build/<host>
-# - depfile:      build/<host>/deps.mk
-# - flat target:  build/<host>/flat.ks
-$(BUILDDIR)/%/deps.mk: $(HOSTSDIR)/%.ks $(BINDIR)/ksdeps.py | $(BUILDDIR)/%/
+# Generate one depfile per host. The depfile contains only exact source
+# dependencies, not build logic.
+$(BUILDDIR)/%/deps.mk: $(HOSTSDIR)/%.ks $(HOSTSDIR)/default.env $(HOST_ENVS) $(KSDEPS) | $(BUILDDIR)/%/
 	@echo "build/$*/deps.mk: building dependencies"
-	@python3 $(BINDIR)/ksdeps.py "$*"
+	@python3 $(KSDEPS) "$*"
 
-# Include only the depfiles that are actually needed.
-ifneq ($(filter clean distclean mrproper,$(REQUESTED_GOALS)),)
-else
-ifneq ($(strip $(HOSTS_SEL)),)
--include $(HOSTS_SEL:%=$(BUILDDIR)/%/deps.mk)
-endif
-endif
+# Include only existing per-host depfiles. Missing depfiles are never created
+# during parse time.
+-include $(wildcard $(BUILDDIR)/*/deps.mk)
 
 # -----------------------------------------------------------------------------
-# Shared stage recipe
+# Host staging
 # -----------------------------------------------------------------------------
-# Render only variables with the KS_ prefix.
-# Existing inherited KS_* variables are cleared first so only the current
-# default.env and host-specific env file contribute values.
-define stage_recipe
-set -a; \
-for name in $$$$(compgen -A variable KS_ || true); do unset "$$$$name"; done; \
-[[ -f "$(HOSTSDIR)/default.env" ]] && . "$(HOSTSDIR)/default.env"; \
-[[ -f "$(HOSTSDIR)/$(1).env" ]] && . "$(HOSTSDIR)/$(1).env"; \
-set +a; \
-ks_names="$$$$(compgen -A variable KS_ || true)"; \
-if [[ -n "$$$$ks_names" ]]; then \
-	ks_vars="$$$$(printf '$$$$%s ' $$$$ks_names)"; \
-	envsubst "$$$$ks_vars" < "$$<" > "$$@"; \
-else \
-	cp -- "$$<" "$$@"; \
-fi
-endef
-
-# -----------------------------------------------------------------------------
-# Host-specific staging rules
-# -----------------------------------------------------------------------------
-# Staging policy:
-# - Prefer plain *.ksi sources.
-# - Keep staging logic explicit and deterministic.
-
-# Return the list of environment file dependencies for a host.
-host_env_deps = $(HOSTSDIR)/default.env $(wildcard $(HOSTSDIR)/$(1).env)
-# Return the relative subdirectory of a file or an empty string for the root.
-stage_subdir = $(patsubst $(CURDIR)/,,$(dir $(1)))
-
-define HOST_ROOT_STAGE_RULE
-$(BUILDDIR)/$(1)/staged/host.ks: $(HOSTSDIR)/$(1).ks $(call host_env_deps,$(1)) | $(BUILDDIR)/$(1)/staged/
-	@echo "build/$(1)/staged/host.ks: staging host entry"
-	@$(call stage_recipe,$(1))
-endef
-
-define HOST_PROFILE_STAGE_RULE
-$(BUILDDIR)/$(1)/staged/profiles/$(2): $(PROFILESDIR)/$(2) $(call host_env_deps,$(1)) | $(BUILDDIR)/$(1)/staged/profiles/$(call stage_subdir,$(2))
-	@echo "build/$(1)/staged/profiles/$(2): staging profile"
-	@$(call stage_recipe,$(1))
-endef
-
-define HOST_SNIPPET_STAGE_RULE
-$(BUILDDIR)/$(1)/staged/snippets/$(2): $(SNIPPETSDIR)/$(2) $(call host_env_deps,$(1)) | $(BUILDDIR)/$(1)/staged/snippets/$(call stage_subdir,$(2))
-	@echo "build/$(1)/staged/snippets/$(2): staging snippet"
-	@$(call stage_recipe,$(1))
-endef
-
-ifneq ($(filter clean distclean mrproper,$(REQUESTED_GOALS)),)
-else
-$(foreach host,$(HOSTS),$(eval $(call HOST_ROOT_STAGE_RULE,$(host))))
-$(foreach host,$(HOSTS),$(foreach file,$(PROFILE_STAGE_FILES),$(eval $(call HOST_PROFILE_STAGE_RULE,$(host),$(file)))))
-$(foreach host,$(HOSTS),$(foreach file,$(SNIPPET_STAGE_FILES),$(eval $(call HOST_SNIPPET_STAGE_RULE,$(host),$(file)))))
-endif
+# Stage one host into build/<host>/staged.
+$(BUILDDIR)/%/staged/host.ks: $(BUILDDIR)/%/deps.mk $(KSSTAGE) | $(BUILDDIR)/%/
+	@echo "build/$*/staged/host.ks: staging kickstart tree"
+	@python3 $(KSSTAGE) "$*"
 
 # -----------------------------------------------------------------------------
 # Kickstart version artifact
@@ -196,9 +128,9 @@ $(BUILDDIR)/%/ks.version: $(BUILDDIR)/%/staged/host.ks | $(BUILDDIR)/%/
 # -----------------------------------------------------------------------------
 # Flattened build artifact
 # -----------------------------------------------------------------------------
-$(BUILDDIR)/%/flat.ks: $(BUILDDIR)/%/deps.mk $(BUILDDIR)/%/ks.version | $(BUILDDIR)/%/
+$(BUILDDIR)/%/flat.ks: $(BUILDDIR)/%/staged/host.ks $(BUILDDIR)/%/ks.version | $(BUILDDIR)/%/
 	@echo "build/$*/flat.ks: flattening kickstart"
-	@ksflatten -v "$$(cat "$(BUILDDIR)/$*/ks.version")" -c $(BUILDDIR)/$*/staged/host.ks -o "$(BUILDDIR)/$*/flat.ks"
+	@ksflatten -v "$$(cat "$(BUILDDIR)/$*/ks.version")" -c "$(BUILDDIR)/$*/staged/host.ks" -o "$@"
 	@echo "build/$*/flat.ks: build completed."
 
 # -----------------------------------------------------------------------------
@@ -227,13 +159,13 @@ endif
 .PHONY: clean
 # Remove published artifacts only.
 clean:
-	@echo "clean: removing dist artifacts"
+	@echo "$@: removing dist artifacts"
 	@rm -rf "$(DISTDIR)"
 
 .PHONY: distclean mrproper
 # Remove all build artifacts, including staged files and depfiles.
 distclean mrproper: clean
-	@echo "distclean: removing build artifacts"
+	@echo "$@: removing build artifacts"
 	@rm -rf "$(BUILDDIR)"
 
 # -----------------------------------------------------------------------------

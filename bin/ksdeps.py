@@ -1,77 +1,50 @@
 #!/usr/bin/env python3
 """
-Generate Makefile dependency fragments for Kickstart %include/%ksappend graphs.
+Generate a Make dependency fragment for one Kickstart host.
 
-The tool walks the include graph of a Kickstart host entry, resolves logical
-include paths, maps them to host-specific staged build targets under
-build/<host>/staged/..., and emits a Makefile fragment with two rules:
+The tool walks literal %include / %ksappend directives recursively and writes
+two dependency lines:
 
-1. A self-dependency for build/<host>/deps.mk on the current source graph.
-2. A dependency for build/<host>/flat.ks on the staged host-specific build graph.
+1. build/<host>/deps.mk: all source files that influence dependency discovery
+2. build/<host>/flat.ks: all exact source files needed for building the host
 
-All paths emitted into the Makefile fragment are absolute paths so they match a
-Makefile that uses $(CURDIR)-based directory variables.
+Assumptions:
+- hosts/<host>.ks are the only entry points
+- profiles/** and snippets/** includes must use the .ksi suffix
+- include paths are literal and appear on a single line
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import sys
-import tempfile
-from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
 
-INCLUDE_DIRECTIVE_RE = re.compile(r"^\s*%(include|ksappend)\s+(\S+)\s*$")
-ROOT_RELATIVE_PREFIXES = ("snippets/", "profiles/", "hosts/")
-
-
-@dataclass
-class WalkContext:
-    """
-    Shared context for walking a Kickstart include dependency graph.
-
-    Attributes:
-        cwd: Repository root directory.
-        host_name: Host stem used to derive the host-specific build tree.
-        staged_dir: Host-specific staged root, for example build/example0/staged.
-        source_deps: Collected source file dependencies as absolute paths.
-        staged_deps: Collected staged build targets as absolute paths.
-    """
-
-    cwd: Path
-    host_name: str
-    staged_dir: Path
-    source_deps: set[Path]
-    staged_deps: set[Path]
+INCLUDE_RE = re.compile(r"^\s*%(include|ksappend)\s+(\S+)\s*$")
+URL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+ROOT_PREFIXES = ("hosts/", "profiles/", "snippets/")
 
 
 class IncludeError(Exception):
-    """Raised when a Kickstart %include or %ksappend cannot be resolved."""
+    """Raised when a Kickstart include cannot be resolved safely."""
 
 
-def is_url(value: str) -> bool:
-    """
-    Return whether the given value appears to be an absolute URL.
-
-    Args:
-        value: Raw include value from the Kickstart file.
-
-    Returns:
-        True if the value looks like an absolute URL, otherwise False.
-    """
-    parsed = urlparse(value)
-    return bool(parsed.scheme and parsed.netloc)
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Generate a Make dependency fragment for one Kickstart host."
+    )
+    parser.add_argument(
+        "host_name",
+        help="Host name without path or suffix, for example example-vm-uki.",
+    )
+    return parser.parse_args()
 
 
 def validate_host_name(host_name: str) -> str:
     """
     Validate the host name passed on the command line.
-
-    The accepted format is a plain stem without path separators and without a
-    '.ks' suffix.
 
     Args:
         host_name: Raw host name argument.
@@ -86,380 +59,211 @@ def validate_host_name(host_name: str) -> str:
         raise IncludeError(
             "Host name must be passed as a plain stem without path or suffix."
         )
-
     return host_name
 
 
-def resolve_source_for_logical_include(child_path: Path) -> Path:
+def resolve_include(
+    parent_file: Path,
+    include_value: str,
+    repo_root: Path,
+    host_name: str,
+) -> Path:
     """
-    Resolve a logical include path to the existing source file used for
-    recursive parsing.
+    Resolve and validate one include path.
 
     Args:
-        child_path: Logical include path inside the repository.
+        parent_file: Including file.
+        include_value: Raw include value from the Kickstart directive.
+        repo_root: Repository root directory.
+        host_name: Current host name.
 
     Returns:
-        The existing source file path used for recursion.
+        Absolute resolved include path.
 
     Raises:
-        IncludeError: The include file does not exist.
+        IncludeError: The include is invalid or unsafe.
     """
-    if child_path.exists():
-        return child_path.resolve()
-
-    raise IncludeError(f"Missing include file: {child_path}")
-
-
-def normalize_include_path(parent_dir: Path, include_value: str, cwd: Path) -> Path:
-    """
-    Normalize an include path found in a Kickstart file.
-
-    Policy:
-    - URLs are rejected.
-    - Absolute paths are rejected.
-    - Includes below well-known top-level directories are resolved relative to
-      the repository root.
-    - All other includes are resolved relative to the including file.
-
-    Args:
-        parent_dir: Directory of the including file.
-        include_value: Raw include argument from the Kickstart directive.
-        cwd: Repository root directory.
-
-    Returns:
-        The normalized absolute path for the logical include.
-
-    Raises:
-        IncludeError: The include is a URL or absolute path.
-    """
-    if is_url(include_value):
-        raise IncludeError(
-            f"URL not allowed in source includes/ksappends: {include_value}"
-        )
+    if URL_RE.match(include_value):
+        raise IncludeError(f"URL include is not allowed: {include_value}")
 
     if include_value.startswith("/"):
-        raise IncludeError(
-            f"Absolute path not allowed in source includes/ksappends: "
-            f"{include_value}"
-        )
+        raise IncludeError(f"Absolute include path is not allowed: {include_value}")
 
-    if include_value.startswith(ROOT_RELATIVE_PREFIXES):
-        return (cwd / include_value).resolve()
+    if include_value.startswith(ROOT_PREFIXES):
+        candidate = (repo_root / include_value).resolve()
+    else:
+        candidate = (parent_file.parent / include_value).resolve()
 
-    return (parent_dir / include_value).resolve()
-
-
-def ensure_within_repo_root(path_value: Path, cwd: Path) -> None:
-    """
-    Validate that the given path is located inside the repository root.
-
-    Args:
-        path_value: Path to validate.
-        cwd: Repository root directory.
-
-    Raises:
-        IncludeError: The path escapes the repository root.
-    """
     try:
-        path_value.resolve().relative_to(cwd.resolve())
+        rel_path = candidate.relative_to(repo_root)
     except ValueError as exc:
+        raise IncludeError(f"Include escapes repository root: {candidate}") from exc
+
+    if not candidate.is_file():
+        raise IncludeError(f"Missing include file: {candidate}")
+
+    if rel_path.parts[0] in {"profiles", "snippets"} and candidate.suffix != ".ksi":
         raise IncludeError(
-            f"Include escapes repository root: {path_value}"
-        ) from exc
-
-
-def staged_target_for_logical_include(child_ks: Path, ctx: WalkContext) -> Path:
-    """
-    Map a logical include path to its host-specific staged build target path.
-
-    Examples:
-        snippets/foo.ksi -> /repo/build/<host>/staged/snippets/foo.ksi
-        profiles/base.ksi -> /repo/build/<host>/staged/profiles/base.ksi
-
-    The current host entry file is staged as
-    /repo/build/<host>/staged/host.ks.
-
-    Args:
-        child_path: Logical include path inside the repository.
-        ctx: Shared walk context.
-
-    Returns:
-        Absolute staged target path under build/<host>/staged/...
-    """
-    rel_path = child_ks.resolve().relative_to(ctx.cwd.resolve())
-
-    if rel_path.parts[0] == "hosts":
-        expected_rel = Path("hosts") / f"{ctx.host_name}.ks"
-        if rel_path != expected_rel:
-            raise IncludeError(
-                "Only the current host entry may be referenced below hosts/: "
-                f"{rel_path}"
-            )
-        return (ctx.staged_dir / "host.ks").resolve()
-
-    return (ctx.staged_dir / rel_path).resolve()
-
-def validate_include_suffix(path_value: Path, ctx: WalkContext) -> None:
-    """
-    Validate the expected file suffix for a logical include path.
-
-    Policy:
-    - hosts/<current-host>.ks is allowed
-    - profiles/... and snippets/... must end in .ksi
-
-    Args:
-        path_value: Logical include path inside the repository.
-        ctx: Shared walk context.
-
-    Raises:
-        IncludeError: The include path uses an invalid suffix.
-    """
-    rel_path = path_value.resolve().relative_to(ctx.cwd.resolve())
-
-    if rel_path.parts[0] == "hosts":
-        expected_rel = Path("hosts") / f"{ctx.host_name}.ks"
-        if rel_path != expected_rel:
-            raise IncludeError(
-                "Only the current host entry may be referenced below hosts/: "
-                f"{rel_path}"
-            )
-        return
-
-    if rel_path.parts[0] in {"profiles", "snippets"} and rel_path.suffix != ".ksi":
-        raise IncludeError(
-            "Includes below profiles/ and snippets/ must use the .ksi suffix: "
-            f"{rel_path}"
+            f"Includes below profiles/ and snippets/ must use the .ksi suffix: {rel_path}"
         )
 
-def walk(file_src: Path, ctx: WalkContext, stack: list[Path]) -> None:
+    if rel_path.parts[0] == "hosts":
+        expected = Path("hosts") / f"{host_name}.ks"
+        if rel_path != expected:
+            raise IncludeError(
+                f"Only the current host entry may be referenced below hosts/: {rel_path}"
+            )
+
+    return candidate
+
+
+def walk(
+    file_path: Path,
+    repo_root: Path,
+    host_name: str,
+    seen: set[Path],
+    stack: list[Path],
+) -> None:
     """
-    Walk the Kickstart %include/%ksappend dependency graph recursively.
+    Walk the include graph recursively.
 
     Args:
-        file_src: Source file to inspect.
-        ctx: Shared walk context.
-        stack: Current include recursion stack used for cycle detection.
+        file_path: Current source file.
+        repo_root: Repository root directory.
+        host_name: Current host name.
+        seen: Collected source file dependencies.
+        stack: Current recursion stack for cycle detection.
 
     Raises:
-        IncludeError: A cycle is detected or an include cannot be resolved.
+        IncludeError: The include graph is invalid.
     """
-    resolved_file = file_src.resolve()
+    file_path = file_path.resolve()
 
-    if resolved_file in stack:
-        cycle = " -> ".join(path_item.name for path_item in (stack + [resolved_file]))
+    if file_path in stack:
+        cycle = " -> ".join(item.name for item in stack + [file_path])
         raise IncludeError(f"Include cycle detected: {cycle}")
 
-    if not resolved_file.exists():
-        raise IncludeError(f"Missing include file: {resolved_file}")
+    if file_path in seen:
+        return
 
-    ctx.source_deps.add(resolved_file)
-    stack.append(resolved_file)
+    seen.add(file_path)
+    stack.append(file_path)
 
-    file_text = resolved_file.read_text(encoding="utf-8", errors="strict")
-    for lineno, line in enumerate(file_text.splitlines(), start=1):
-        match = INCLUDE_DIRECTIVE_RE.match(line)
+    for lineno, line in enumerate(
+        file_path.read_text(encoding="utf-8").splitlines(),
+        start=1,
+    ):
+        match = INCLUDE_RE.match(line)
         if match is None:
             continue
 
         include_value = match.group(2)
 
         try:
-            child_logical = normalize_include_path(
-                resolved_file.parent,
-                include_value,
-                ctx.cwd,
-            )
-            ensure_within_repo_root(child_logical, ctx.cwd)
-            validate_include_suffix(child_logical, ctx)
-            staged_target = staged_target_for_logical_include(child_logical, ctx)
+            child = resolve_include(file_path, include_value, repo_root, host_name)
         except IncludeError as exc:
-            raise IncludeError(f"{resolved_file}:{lineno}: {exc}") from exc
-
-        ctx.staged_deps.add(staged_target)
+            raise IncludeError(f"{file_path}:{lineno}: {exc}") from exc
 
         try:
-            child_src = resolve_source_for_logical_include(child_logical)
-            walk(child_src, ctx, stack)
+            walk(child, repo_root, host_name, seen, stack)
         except IncludeError as exc:
-            raise IncludeError(f"{resolved_file}:{lineno}: {exc}") from exc
+            raise IncludeError(f"{file_path}:{lineno}: {exc}") from exc
 
     stack.pop()
 
 
+def collect_dependencies(repo_root: Path, host_name: str) -> list[Path]:
+    """
+    Collect exact transitive source dependencies for one host.
+
+    Args:
+        repo_root: Repository root directory.
+        host_name: Current host name.
+
+    Returns:
+        Sorted list of absolute source dependency paths.
+
+    Raises:
+        IncludeError: The host entry or one of its includes is invalid.
+    """
+    host_name = validate_host_name(host_name)
+
+    host_file = (repo_root / "hosts" / f"{host_name}.ks").resolve()
+    default_env = (repo_root / "hosts" / "default.env").resolve()
+    host_env = (repo_root / "hosts" / f"{host_name}.env").resolve()
+
+    if not host_file.is_file():
+        raise IncludeError(f"Missing host entry file: {host_file}")
+
+    seen: set[Path] = set()
+    walk(host_file, repo_root, host_name, seen, [])
+
+    if default_env.is_file():
+        seen.add(default_env)
+
+    if host_env.is_file():
+        seen.add(host_env)
+
+    return sorted(seen)
+
+
 def render_make_fragment(
     depfile_path: Path,
-    depfile_dependencies: set[Path],
     flat_target: Path,
-    staged_dependencies: set[Path],
+    source_deps: list[Path],
+    tool_path: Path,
 ) -> str:
     """
-    Render the final Makefile dependency fragment content.
+    Render the final Make dependency fragment.
 
     Args:
-        depfile_path: Absolute path of the generated depfile.
-        depfile_dependencies: Source dependencies that trigger depfile refresh.
-        dist_target: Absolute final dist target path.
-        staged_dependencies: Absolute staged build targets required for dist.
+        depfile_path: Absolute path to build/<host>/deps.mk.
+        flat_target: Absolute path to build/<host>/flat.ks.
+        source_deps: Exact transitive source dependencies for the host.
+        tool_path: Path to this tool.
 
     Returns:
-        Makefile fragment text with trailing newlines.
+        Complete Make fragment text.
     """
-    depfile_deps_sorted = sorted(depfile_dependencies, key=str)
-    staged_deps_sorted = sorted(staged_dependencies, key=str)
-
-    depfile_deps_line = " ".join(str(path_item) for path_item in depfile_deps_sorted)
-    staged_deps_line = " ".join(str(path_item) for path_item in staged_deps_sorted)
+    flat_deps = " ".join(str(path) for path in source_deps)
+    depfile_deps = " ".join(
+        str(path) for path in sorted([*source_deps, tool_path.resolve()])
+    )
 
     return (
-        f"{depfile_path}: {depfile_deps_line}\n"
-        f"{flat_target}: {staged_deps_line}\n"
+        f"{depfile_path}: {depfile_deps}\n"
+        f"{flat_target}: {flat_deps}\n"
     )
-
-
-def write_text_atomic(path_value: Path, content: str) -> None:
-    """
-    Write text to a file atomically inside the destination directory.
-
-    The content is first written to a temporary file in the destination
-    directory, then published via os.replace().
-
-    Args:
-        path_value: Final destination path.
-        content: Text content to write.
-    """
-    path_value.parent.mkdir(parents=True, exist_ok=True)
-
-    file_descriptor: int | None = None
-    tmp_path_str: str | None = None
-
-    try:
-        file_descriptor, tmp_path_str = tempfile.mkstemp(
-            prefix=f".{path_value.name}.",
-            suffix=".tmp",
-            dir=path_value.parent,
-            text=True,
-        )
-        with os.fdopen(file_descriptor, "w", encoding="utf-8") as handle:
-            file_descriptor = None
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-
-        os.replace(tmp_path_str, path_value)
-        tmp_path_str = None
-    finally:
-        if file_descriptor is not None:
-            os.close(file_descriptor)
-        if tmp_path_str is not None:
-            try:
-                Path(tmp_path_str).unlink()
-            except FileNotFoundError:
-                pass
-
-
-def update_output_file(out_path: Path, content: str) -> None:
-    """
-    Update the output Make fragment.
-
-    Behavior:
-    - If the output file already exists and the content is unchanged, the file
-      is not rewritten.
-    - If the content differs or the file does not exist, the file is rewritten
-      atomically.
-    - The output file mtime is always refreshed at the end so remade included
-      Makefiles remain current from Make's point of view.
-
-    Args:
-        out_path: Output Make fragment path.
-        content: Final content to persist.
-    """
-    existing_content: str | None = None
-    if out_path.exists():
-        existing_content = out_path.read_text(encoding="utf-8")
-
-    if existing_content != content:
-        write_text_atomic(out_path, content)
-
-    out_path.touch(exist_ok=True)
-
-
-def parse_args() -> argparse.Namespace:
-    """
-    Parse command-line arguments.
-
-    Returns:
-        Parsed argument namespace.
-    """
-    parser = argparse.ArgumentParser(
-        description=(
-            "Generate a Make include fragment for Kickstart "
-            "%include/%ksappend dependencies."
-        )
-    )
-    parser.add_argument(
-        "host_name",
-        help="Kickstart host name without path or suffix, for example example0.",
-    )
-    return parser.parse_args()
 
 
 def main() -> int:
     """
-    Generate a Makefile dependency fragment for a Kickstart host entry.
+    Generate one dependency fragment for one host.
 
     Returns:
-        Process exit code. Zero indicates success.
-
-    Raises:
-        IncludeError: A Kickstart include cannot be resolved safely.
+        Process exit code.
     """
     args = parse_args()
 
-    cwd = Path.cwd().resolve()
+    repo_root = Path.cwd().resolve()
     host_name = validate_host_name(args.host_name)
 
-    build_dir = (cwd / "build" / host_name).resolve()
-    staged_dir = (build_dir / "staged").resolve()
-    host_src = (cwd / "hosts" / f"{host_name}.ks").resolve()
-    out_mk = (build_dir / "deps.mk").resolve()
-    flat_target = (build_dir / "flat.ks").resolve()
+    build_dir = repo_root / "build" / host_name
+    depfile_path = build_dir / "deps.mk"
+    flat_target = build_dir / "flat.ks"
+    tool_path = repo_root / "bin" / "ksdeps.py"
 
-    default_env = (cwd / "hosts" / "default.env").resolve()
-    host_env = (cwd / "hosts" / f"{host_name}.env").resolve()
-    ksdeps_tool = (cwd / "bin" / "ksdeps.py").resolve()
+    source_deps = collect_dependencies(repo_root, host_name)
+    content = render_make_fragment(depfile_path, flat_target, source_deps, tool_path)
 
-    if not host_src.exists():
-        raise IncludeError(f"Missing host entry file: {host_src}")
+    depfile_path.parent.mkdir(parents=True, exist_ok=True)
 
-    ctx = WalkContext(
-        cwd=cwd,
-        host_name=host_name,
-        staged_dir=staged_dir,
-        source_deps=set(),
-        staged_deps=set(),
-    )
+    old_content = None
+    if depfile_path.exists():
+        old_content = depfile_path.read_text(encoding="utf-8")
 
-    walk(host_src, ctx, [])
-
-    # Add the current staged host entry explicitly to the staged dependency set.
-    ctx.staged_deps.add((staged_dir / "host.ks").resolve())
-
-    depfile_dependencies = set(ctx.source_deps)
-    depfile_dependencies.add(ksdeps_tool)
-
-    if default_env.exists():
-        depfile_dependencies.add(default_env)
-
-    if host_env.exists():
-        depfile_dependencies.add(host_env)
-
-    content = render_make_fragment(
-        depfile_path=out_mk,
-        depfile_dependencies=depfile_dependencies,
-        flat_target=flat_target,
-        staged_dependencies=ctx.staged_deps,
-    )
-    update_output_file(out_mk, content)
+    if old_content != content:
+        depfile_path.write_text(content, encoding="utf-8")
 
     return 0
 
