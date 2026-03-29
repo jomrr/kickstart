@@ -4,7 +4,7 @@ Generate Makefile dependency fragments for Kickstart %include/%ksappend graphs.
 
 The tool walks the include graph of a Kickstart host entry, resolves logical
 include paths, maps them to host-specific staged build targets under
-build/<host>/..., and emits a Makefile fragment with two rules:
+build/<host>/staged/..., and emits a Makefile fragment with two rules:
 
 1. A self-dependency for build/<host>/deps.mk on the current source graph.
 2. A dependency for dist/<host>.ks on the staged host-specific build graph.
@@ -37,6 +37,7 @@ class WalkContext:
         cwd: Repository root directory.
         host_name: Host stem used to derive the host-specific build tree.
         build_dir: Host-specific build root, for example build/example0.
+        staged_dir: Host-specific staged root, for example build/example0/staged.
         source_deps: Collected source file dependencies as absolute paths.
         staged_deps: Collected staged build targets as absolute paths.
     """
@@ -44,6 +45,7 @@ class WalkContext:
     cwd: Path
     host_name: str
     build_dir: Path
+    staged_dir: Path
     source_deps: set[Path]
     staged_deps: set[Path]
 
@@ -183,10 +185,11 @@ def staged_target_for_logical_include(child_ks: Path, ctx: WalkContext) -> Path:
     Map a logical include path to its host-specific staged build target path.
 
     Examples:
-        snippets/foo.ks -> /repo/build/<host>/snippets/foo.ks
-        profiles/base.ks -> /repo/build/<host>/profiles/base.ks
+        snippets/foo.ks -> /repo/build/<host>/staged/snippets/foo.ks
+        profiles/base.ks -> /repo/build/<host>/staged/profiles/base.ks
 
-    The current host entry file is staged as /repo/build/<host>/host.ks.
+    The current host entry file is staged as
+    /repo/build/<host>/staged/host.ks.
     References to other files below hosts/ are rejected because the staging
     model keeps a single host entry point per host-specific build tree.
 
@@ -195,7 +198,7 @@ def staged_target_for_logical_include(child_ks: Path, ctx: WalkContext) -> Path:
         ctx: Shared walk context.
 
     Returns:
-        Absolute staged target path under build/<host>/...
+        Absolute staged target path under build/<host>/staged/...
 
     Raises:
         IncludeError: A hosts/ include references a different host file.
@@ -209,9 +212,9 @@ def staged_target_for_logical_include(child_ks: Path, ctx: WalkContext) -> Path:
                 "Only the current host entry may be referenced below hosts/: "
                 f"{rel_path}"
             )
-        return (ctx.build_dir / "host.ks").resolve()
+        return (ctx.staged_dir / "host.ks").resolve()
 
-    return (ctx.build_dir / rel_path).resolve()
+    return (ctx.staged_dir / rel_path).resolve()
 
 
 def walk(file_src: Path, ctx: WalkContext, stack: list[Path]) -> None:
@@ -271,7 +274,7 @@ def walk(file_src: Path, ctx: WalkContext, stack: list[Path]) -> None:
 def render_make_fragment(
     depfile_path: Path,
     depfile_dependencies: set[Path],
-    dist_target: Path,
+    flat_target: Path,
     staged_dependencies: set[Path],
 ) -> str:
     """
@@ -294,7 +297,7 @@ def render_make_fragment(
 
     return (
         f"{depfile_path}: {depfile_deps_line}\n"
-        f"{dist_target}: {staged_deps_line}\n"
+        f"{flat_target}: {staged_deps_line}\n"
     )
 
 
@@ -401,33 +404,47 @@ def main() -> int:
     host_name = validate_host_name(args.host_name)
 
     build_dir = (cwd / "build" / host_name).resolve()
-    profile_src = (cwd / "hosts" / f"{host_name}.ks").resolve()
+    staged_dir = (build_dir / "staged").resolve()
+    host_src = (cwd / "hosts" / f"{host_name}.ks").resolve()
     out_mk = (build_dir / "deps.mk").resolve()
-    dist_target = (cwd / "dist" / f"{host_name}.ks").resolve()
+    flat_target = (build_dir / "flat.ks").resolve()
 
-    if not profile_src.exists():
-        raise IncludeError(f"Missing host entry file: {profile_src}")
+    default_env = (cwd / "hosts" / "default.env").resolve()
+    host_env = (cwd / "hosts" / f"{host_name}.env").resolve()
+    ksstage_tool = (cwd / "bin" / "ksstage.sh").resolve()
+    ksdeps_tool = (cwd / "bin" / "ksdeps.py").resolve()
+
+    if not host_src.exists():
+        raise IncludeError(f"Missing host entry file: {host_src}")
 
     ctx = WalkContext(
         cwd=cwd,
         host_name=host_name,
         build_dir=build_dir,
+        staged_dir=staged_dir,
         source_deps=set(),
         staged_deps=set(),
     )
 
-    walk(profile_src, ctx, [])
+    walk(host_src, ctx, [])
 
-    # Add the current host entry explicitly to the staged target set.
-    ctx.staged_deps.add((build_dir / "host.ks").resolve())
+    # Add the current staged host entry explicitly to the staged dependency set.
+    ctx.staged_deps.add((staged_dir / "host.ks").resolve())
 
     depfile_dependencies = set(ctx.source_deps)
-    depfile_dependencies.add((cwd / "bin" / "ksdeps.py").resolve())
+    depfile_dependencies.add(ksdeps_tool)
+    depfile_dependencies.add(ksstage_tool)
+
+    if default_env.exists():
+        depfile_dependencies.add(default_env)
+
+    if host_env.exists():
+        depfile_dependencies.add(host_env)
 
     content = render_make_fragment(
         depfile_path=out_mk,
         depfile_dependencies=depfile_dependencies,
-        dist_target=dist_target,
+        flat_target=flat_target,
         staged_dependencies=ctx.staged_deps,
     )
     update_output_file(out_mk, content)

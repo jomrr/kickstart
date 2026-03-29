@@ -10,7 +10,7 @@ set -euo pipefail
 # Assumptions:
 # - The installation uses LUKS2.
 # - KS_LUKS_PW is available during staging/rendering.
-# - A TPM or vTPM device is present.
+# - A TPM2 or vTPM2 device is present.
 #
 # Notes:
 # - PCRs are set explicitly to keep behavior deterministic.

@@ -72,27 +72,27 @@ os_variant="${OS_VARIANT:-fedora41}"
 memory_mb="${MEMORY_MB:-8192}"
 vcpus="${VCPUS:-4}"
 disk_gib="${DISK_GIB:-32}"
-#disk_pool="${DISK_POOL:-default}"
+disk_pool="${DISK_POOL:-default}"
 network_name="${NETWORK_NAME:-default}"
 mac_address="${MAC_ADDRESS:-$(generate_mac_address "${host_name}")}"
 
 virt-install \
-    --name "${vm_name}" \
-    --connect "qemu:///system" \
-    --virt-type "kvm" \
-    --memory "${memory_mb}" \
-    --vcpus "${vcpus}" \
-    --cpu "host-model" \
-    --os-variant "${os_variant}" \
     --boot "loader=/usr/share/OVMF/OVMF_CODE.secboot.fd,loader.readonly=yes,loader.type=pflash,nvram.template=/usr/share/OVMF/OVMF_VARS.secboot.fd,loader_secure=yes" \
-    --features "smm.state=on" \
-    --tpm "backend.type=emulator,backend.version=2.0,model=tpm-crb" \
-    --disk "/tmp/${vm_name}.qcow2,format=qcow2,size=${disk_gib},target.bus=virtio" \
-    --network "network=${network_name},model=virtio,mac=${mac_address}" \
-    --graphics "spice" \
-    --sound "none" \
+    --connect "qemu:///system" \
     --console "pty,target_type=serial" \
-    --location "${install_url}" \
-    --initrd-inject "${ks_file}" \
+    --cpu "host-passthrough" \
+    --disk "pool=${disk_pool},size=${disk_gib},bus=virtio" \
     --extra-args "inst.ks=file:/${host_name}.ks console=tty0 ipv6.disable=1" \
-    --autoconsole "graphical"
+    --features "smm.state=on" \
+    --graphics "vnc" \
+    --initrd-inject "${ks_file}" \
+    --location "${install_url}" \
+    --memory "${memory_mb}" \
+    --name "${vm_name}" \
+    --network "network=${network_name},model=virtio,mac=${mac_address}" \
+    --noautoconsole \
+    --os-variant "${os_variant}" \
+    --sound "none" \
+    --tpm "backend.type=emulator,backend.version=2.0,model=tpm-crb" \
+    --vcpus "${vcpus}" \
+    --virt-type "kvm"
