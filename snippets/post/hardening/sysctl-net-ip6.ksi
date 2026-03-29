@@ -1,5 +1,5 @@
 # vim:  set ft=kickstart
-# file: snippets/post/harden/sysctl-net-ip6.ks
+# file: snippets/post/harden/sysctl-net-ip6.ksi
 
 %post --interpreter=/usr/bin/bash --log=/root/ks-post-harden-sysctl-net-ip6.log
 cat << EOF >> /etc/sysctl.d/90-harden-net-ipv6.conf

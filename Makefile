@@ -8,6 +8,7 @@ SHELL           := /usr/bin/bash
 
 .DELETE_ON_ERROR:
 .DEFAULT_GOAL   := all
+.SECONDARY:
 
 # -----------------------------------------------------------------------------
 # User-configurable variables
@@ -35,16 +36,15 @@ TEST_HOSTS      := $(basename $(notdir $(wildcard $(HOSTSDIR)/example*.ks)))
 # Source inventory for explicit staging rules
 # -----------------------------------------------------------------------------
 # Collect all logical profile and snippet stage targets.
-# If both *.ks and *.ks.in exist for the same logical path, prefer *.ks.
-PROFILE_STAGE_FILES := $(sort $(shell cd "$(PROFILESDIR)" && find . -type f \( -name '*.ks' -o -name '*.ks.in' \) -printf '%P\n' | sed 's/\.in$$//'))
-SNIPPET_STAGE_FILES := $(sort $(shell cd "$(SNIPPETSDIR)" && find . -type f \( -name '*.ks' -o -name '*.ks.in' \) -printf '%P\n' | sed 's/\.in$$//'))
+PROFILE_STAGE_FILES := $(shell find "$(PROFILESDIR)" -type f -name '*.ksi' -printf '%P\n')
+SNIPPET_STAGE_FILES := $(shell find "$(SNIPPETSDIR)" -type f -name '*.ksi' -printf '%P\n')
 
 # Resolve a logical stage file to the preferred source file.
-profile_src = $(firstword $(wildcard $(PROFILESDIR)/$(1) $(PROFILESDIR)/$(1).in))
-snippet_src = $(firstword $(wildcard $(SNIPPETSDIR)/$(1) $(SNIPPETSDIR)/$(1).in))
+profile_src = $(PROFILESDIR)/$(1)
+snippet_src = $(SNIPPETSDIR)/$(1)
 
 # Return the relative subdirectory of a file or an empty string for the root.
-stage_subdir = $(if $(filter ./,$(dir $(1))),,$(dir $(1)))
+stage_subdir = $(patsubst $(CURDIR)/,,$(dir $(1)))
 
 # -----------------------------------------------------------------------------
 # Generic directory rule
@@ -59,8 +59,7 @@ stage_subdir = $(if $(filter ./,$(dir $(1))),,$(dir $(1)))
 # -----------------------------------------------------------------------------
 .PHONY: all
 # Build all published Kickstart files.
-all:
-	@$(MAKE) $(HOSTS:%=$(DISTDIR)/%.ks)
+all: $(HOSTS:%=$(DISTDIR)/%.ks)
 
 .PHONY: flat
 # Build all flattened Kickstart artifacts without publishing them.
@@ -86,7 +85,7 @@ $(HOSTS:%=validate-%): validate-%: $(BUILDDIR)/%/validate.log
 # Requested host selection for depfile inclusion
 # -----------------------------------------------------------------------------
 # Only include depfiles for the hosts that are actually needed.
-REQUESTED_GOALS := $(MAKECMDGOALS)
+REQUESTED_GOALS := $(if $(MAKECMDGOALS),$(MAKECMDGOALS),all)
 
 HOSTS_FROM_HOST_GOALS      := $(filter $(HOSTS),$(REQUESTED_GOALS))
 HOSTS_FROM_FLAT_GOALS      := $(patsubst flat-%,%,$(filter flat-%,$(REQUESTED_GOALS)))
@@ -158,8 +157,7 @@ endef
 # Host-specific staging rules
 # -----------------------------------------------------------------------------
 # Staging policy:
-# - Prefer plain *.ks sources.
-# - Fall back to *.ks.in when no *.ks exists.
+# - Prefer plain *.ksi sources.
 # - Keep staging logic explicit and deterministic.
 define HOST_ROOT_STAGE_RULE
 HOST_ENV_DEPS_$(1) := $(HOSTSDIR)/default.env $(wildcard $(HOSTSDIR)/$(1).env)
@@ -200,7 +198,7 @@ $(BUILDDIR)/%/ks.version: $(BUILDDIR)/%/staged/host.ks | $(BUILDDIR)/%/
 # -----------------------------------------------------------------------------
 $(BUILDDIR)/%/flat.ks: $(BUILDDIR)/%/deps.mk $(BUILDDIR)/%/ks.version | $(BUILDDIR)/%/
 	@echo "build/$*/flat.ks: flattening kickstart"
-	@cd "$(BUILDDIR)/$*/staged" && ksflatten -v "$$(cat "$(BUILDDIR)/$*/ks.version")" -c host.ks -o "$(BUILDDIR)/$*/flat.ks"
+	@ksflatten -v "$$(cat "$(BUILDDIR)/$*/ks.version")" -c $(BUILDDIR)/$*/staged/host.ks -o "$(BUILDDIR)/$*/flat.ks"
 	@echo "build/$*/flat.ks: build completed."
 
 # -----------------------------------------------------------------------------

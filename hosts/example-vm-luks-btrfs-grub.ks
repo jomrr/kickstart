@@ -2,4 +2,4 @@
 # file: hosts/example-vm-core-grub.ks
 
 # include system-profile and its dependencies
-%include profiles/fedora/vm-luks-btrfs-grub.ks
+%include profiles/fedora/vm-luks-btrfs-grub.ksi

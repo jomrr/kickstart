@@ -1,5 +1,5 @@
 # vim: set ft=kickstart
-# file: snippets/post/tpm/cryptenroll.ks
+# file: snippets/post/tpm/cryptenroll.ksi
 
 %post --erroronfail --interpreter=/usr/bin/bash --log=/root/ks-post-tpm-cryptenroll.log
 set -euo pipefail

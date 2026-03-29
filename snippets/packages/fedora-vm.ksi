@@ -1,8 +1,8 @@
 # vim:  set ft=kickstart
-# file: snippets/packages/fedora-metal.ks
+# file: snippets/packages/fedora-vm.ksi
 
 %packages --exclude-weakdeps --excludedocs --ignoremissing --inst-langs de_DE,en_US
-linux-firmware
-microcode_ctl
-fwupd
+-linux-firmware
+qemu-guest-agent
+virt-firmware
 %end

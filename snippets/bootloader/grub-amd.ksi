@@ -1,5 +1,5 @@
 # vim:  set ft=kickstart
-# file: snippets/bootloader/grub-amd.ks
+# file: snippets/bootloader/grub-amd.ksi
 #
 # AMD kvm-host boot configuration.
 #

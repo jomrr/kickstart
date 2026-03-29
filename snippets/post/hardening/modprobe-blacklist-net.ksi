@@ -1,5 +1,5 @@
 # vim:  set ft=kickstart
-# file: snippets/post/harden/modprobe-blacklist-net.ks
+# file: snippets/post/harden/modprobe-blacklist-net.ksi
 
 %post --interpreter=/usr/bin/bash --log=/root/ks-post-modprobe-blacklist.log
 set -euo pipefail

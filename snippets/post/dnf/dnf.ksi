@@ -1,5 +1,5 @@
 # vim:  set ft=kickstart
-# file: snippets/post/dnf.ks
+# file: snippets/post/dnf.ksi
 
 %post --interpreter /usr/bin/bash --log=/root/install/ks-post-dnf.log
 cp -a /etc/dnf/dnf.conf /etc/dnf/dnf.conf.rpm

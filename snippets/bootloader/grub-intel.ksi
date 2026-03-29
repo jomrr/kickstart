@@ -1,5 +1,5 @@
 # vim:  set ft=kickstart
-# file: snippets/bootloader/grub-intel.ks
+# file: snippets/bootloader/grub-intel.ksi
 #
 # Intel kvm-host boot configuration.
 #

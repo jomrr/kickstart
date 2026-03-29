@@ -1,5 +1,5 @@
 # vim:  set ft=kickstart
-# file: snippets/storage/btrfs-single-uki.ks
+# file: snippets/storage/btrfs-single-uki.ksi
 
 # partitioning
 ignoredisk --only-use=${KS_INSTALL_DISK}

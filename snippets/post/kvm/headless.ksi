@@ -1,5 +1,5 @@
 # vim:  set ft=kickstart
-# file: snippets/post/kvm/headless.ks
+# file: snippets/post/kvm/headless.ksi
 
 %post --interpreter /usr/bin/bash --log=/root/ks-post-kvm-headless.log
 dnf install --setopt=install_weak_deps=False -y bridge-utils cockpit-bridge cockpit-machines cockpit-networkmanager cockpit-system cockpit-ws guestfs-tools qemu-kvm-core libvirt virt-bootstrap virt-install

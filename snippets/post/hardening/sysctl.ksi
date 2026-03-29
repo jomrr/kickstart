@@ -1,5 +1,5 @@
 # vim:  set ft=kickstart
-# file: snippets/post/harden/sysctl.ks
+# file: snippets/post/harden/sysctl.ksi
 
 %post --interpreter=/usr/bin/bash --log=/root/ks-post-harden-sysctl.log
 cat << EOF >> /etc/sysctl.d/90-harden-dev-tty.conf

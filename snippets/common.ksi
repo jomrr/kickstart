@@ -1,5 +1,5 @@
 # vim:  set ft=kickstart
-# file: snippets/common.ks
+# file: snippets/common.ksi
 
 # installation in text mode
 text

@@ -1,5 +1,5 @@
 # vim:  set ft=kickstart
-# file: snippets/packages/fedora-vm-uki.ks
+# file: snippets/packages/fedora-vm-uki.ksi
 
 %packages --exclude-weakdeps --excludedocs --ignoremissing --inst-langs de_DE,en_US
 binutils

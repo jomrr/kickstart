@@ -7,7 +7,7 @@ include paths, maps them to host-specific staged build targets under
 build/<host>/staged/..., and emits a Makefile fragment with two rules:
 
 1. A self-dependency for build/<host>/deps.mk on the current source graph.
-2. A dependency for dist/<host>.ks on the staged host-specific build graph.
+2. A dependency for build/<host>/flat.ks on the staged host-specific build graph.
 
 All paths emitted into the Makefile fragment are absolute paths so they match a
 Makefile that uses $(CURDIR)-based directory variables.
@@ -36,7 +36,6 @@ class WalkContext:
     Attributes:
         cwd: Repository root directory.
         host_name: Host stem used to derive the host-specific build tree.
-        build_dir: Host-specific build root, for example build/example0.
         staged_dir: Host-specific staged root, for example build/example0/staged.
         source_deps: Collected source file dependencies as absolute paths.
         staged_deps: Collected staged build targets as absolute paths.
@@ -44,7 +43,6 @@ class WalkContext:
 
     cwd: Path
     host_name: str
-    build_dir: Path
     staged_dir: Path
     source_deps: set[Path]
     staged_deps: set[Path]
@@ -92,34 +90,24 @@ def validate_host_name(host_name: str) -> str:
     return host_name
 
 
-def resolve_source_for_logical_include(child_ks: Path) -> Path:
+def resolve_source_for_logical_include(child_path: Path) -> Path:
     """
-    Resolve a logical include path to the source file used for recursive parsing.
-
-    Resolution policy:
-    - Prefer the logical file itself, for example: snippets/foo.ks
-    - Fall back to a templated source file, for example: snippets/foo.ks.in
+    Resolve a logical include path to the existing source file used for
+    recursive parsing.
 
     Args:
-        child_ks: Logical include path ending in .ks.
+        child_path: Logical include path inside the repository.
 
     Returns:
         The existing source file path used for recursion.
 
     Raises:
-        IncludeError: The logical include and its .in fallback are both missing.
+        IncludeError: The include file does not exist.
     """
-    if child_ks.exists():
-        return child_ks.resolve()
+    if child_path.exists():
+        return child_path.resolve()
 
-    child_template = child_ks.with_suffix(f"{child_ks.suffix}.in")
-    if child_template.exists():
-        return child_template.resolve()
-
-    raise IncludeError(
-        f"Missing include file: {child_ks} "
-        f"(or template fallback {child_template})"
-    )
+    raise IncludeError(f"Missing include file: {child_path}")
 
 
 def normalize_include_path(parent_dir: Path, include_value: str, cwd: Path) -> Path:
@@ -185,23 +173,18 @@ def staged_target_for_logical_include(child_ks: Path, ctx: WalkContext) -> Path:
     Map a logical include path to its host-specific staged build target path.
 
     Examples:
-        snippets/foo.ks -> /repo/build/<host>/staged/snippets/foo.ks
-        profiles/base.ks -> /repo/build/<host>/staged/profiles/base.ks
+        snippets/foo.ksi -> /repo/build/<host>/staged/snippets/foo.ksi
+        profiles/base.ksi -> /repo/build/<host>/staged/profiles/base.ksi
 
     The current host entry file is staged as
     /repo/build/<host>/staged/host.ks.
-    References to other files below hosts/ are rejected because the staging
-    model keeps a single host entry point per host-specific build tree.
 
     Args:
-        child_ks: Logical include path inside the repository.
+        child_path: Logical include path inside the repository.
         ctx: Shared walk context.
 
     Returns:
         Absolute staged target path under build/<host>/staged/...
-
-    Raises:
-        IncludeError: A hosts/ include references a different host file.
     """
     rel_path = child_ks.resolve().relative_to(ctx.cwd.resolve())
 
@@ -216,6 +199,37 @@ def staged_target_for_logical_include(child_ks: Path, ctx: WalkContext) -> Path:
 
     return (ctx.staged_dir / rel_path).resolve()
 
+def validate_include_suffix(path_value: Path, ctx: WalkContext) -> None:
+    """
+    Validate the expected file suffix for a logical include path.
+
+    Policy:
+    - hosts/<current-host>.ks is allowed
+    - profiles/... and snippets/... must end in .ksi
+
+    Args:
+        path_value: Logical include path inside the repository.
+        ctx: Shared walk context.
+
+    Raises:
+        IncludeError: The include path uses an invalid suffix.
+    """
+    rel_path = path_value.resolve().relative_to(ctx.cwd.resolve())
+
+    if rel_path.parts[0] == "hosts":
+        expected_rel = Path("hosts") / f"{ctx.host_name}.ks"
+        if rel_path != expected_rel:
+            raise IncludeError(
+                "Only the current host entry may be referenced below hosts/: "
+                f"{rel_path}"
+            )
+        return
+
+    if rel_path.parts[0] in {"profiles", "snippets"} and rel_path.suffix != ".ksi":
+        raise IncludeError(
+            "Includes below profiles/ and snippets/ must use the .ksi suffix: "
+            f"{rel_path}"
+        )
 
 def walk(file_src: Path, ctx: WalkContext, stack: list[Path]) -> None:
     """
@@ -256,6 +270,7 @@ def walk(file_src: Path, ctx: WalkContext, stack: list[Path]) -> None:
                 ctx.cwd,
             )
             ensure_within_repo_root(child_logical, ctx.cwd)
+            validate_include_suffix(child_logical, ctx)
             staged_target = staged_target_for_logical_include(child_logical, ctx)
         except IncludeError as exc:
             raise IncludeError(f"{resolved_file}:{lineno}: {exc}") from exc
@@ -411,7 +426,6 @@ def main() -> int:
 
     default_env = (cwd / "hosts" / "default.env").resolve()
     host_env = (cwd / "hosts" / f"{host_name}.env").resolve()
-    ksstage_tool = (cwd / "bin" / "ksstage.sh").resolve()
     ksdeps_tool = (cwd / "bin" / "ksdeps.py").resolve()
 
     if not host_src.exists():
@@ -420,7 +434,6 @@ def main() -> int:
     ctx = WalkContext(
         cwd=cwd,
         host_name=host_name,
-        build_dir=build_dir,
         staged_dir=staged_dir,
         source_deps=set(),
         staged_deps=set(),
@@ -433,7 +446,6 @@ def main() -> int:
 
     depfile_dependencies = set(ctx.source_deps)
     depfile_dependencies.add(ksdeps_tool)
-    depfile_dependencies.add(ksstage_tool)
 
     if default_env.exists():
         depfile_dependencies.add(default_env)

@@ -1,5 +1,5 @@
 # vim:  set ft=kickstart
-# file: snippets/post/harden/modprobe-blacklist-drivers.ks
+# file: snippets/post/harden/modprobe-blacklist-drivers.ksi
 
 %post --interpreter=/usr/bin/bash --log=/root/ks-post-modprobe-blacklist-drivers.log
 set -euo pipefail
