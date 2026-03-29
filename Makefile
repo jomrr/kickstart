@@ -36,8 +36,8 @@ TEST_HOSTS      := $(basename $(notdir $(wildcard $(HOSTSDIR)/example*.ks)))
 # Source inventory for explicit staging rules
 # -----------------------------------------------------------------------------
 # Collect all logical profile and snippet stage targets.
-PROFILE_STAGE_FILES := $(shell find "$(PROFILESDIR)" -type f -name '*.ksi' -printf '%P\n')
-SNIPPET_STAGE_FILES := $(shell find "$(SNIPPETSDIR)" -type f -name '*.ksi' -printf '%P\n')
+PROFILE_STAGE_FILES := $(sort $(shell find "$(PROFILESDIR)" -type f -name '*.ksi' -printf '%P\n'))
+SNIPPET_STAGE_FILES := $(sort $(shell find "$(SNIPPETSDIR)" -type f -name '*.ksi' -printf '%P\n'))
 
 # -----------------------------------------------------------------------------
 # Generic directory rule
@@ -176,9 +176,12 @@ $(BUILDDIR)/$(1)/staged/snippets/$(2): $(SNIPPETSDIR)/$(2) $(call host_env_deps,
 	@$(call stage_recipe,$(1))
 endef
 
+ifneq ($(filter clean distclean mrproper,$(REQUESTED_GOALS)),)
+else
 $(foreach host,$(HOSTS),$(eval $(call HOST_ROOT_STAGE_RULE,$(host))))
 $(foreach host,$(HOSTS),$(foreach file,$(PROFILE_STAGE_FILES),$(eval $(call HOST_PROFILE_STAGE_RULE,$(host),$(file)))))
 $(foreach host,$(HOSTS),$(foreach file,$(SNIPPET_STAGE_FILES),$(eval $(call HOST_SNIPPET_STAGE_RULE,$(host),$(file)))))
+endif
 
 # -----------------------------------------------------------------------------
 # Kickstart version artifact
@@ -203,7 +206,7 @@ $(BUILDDIR)/%/flat.ks: $(BUILDDIR)/%/deps.mk $(BUILDDIR)/%/ks.version | $(BUILDD
 # -----------------------------------------------------------------------------
 $(BUILDDIR)/%/validate.log: $(BUILDDIR)/%/flat.ks $(BUILDDIR)/%/ks.version | $(BUILDDIR)/%/
 	@echo "build/$*/validate.log: validating kickstart"
-	@ksvalidator -v "$$(cat "$(BUILDDIR)/$*/ks.version")" "$<" 2>&1 1> "$@"
+	@ksvalidator -v "$$(cat "$(BUILDDIR)/$*/ks.version")" "$<" > "$@" 2>&1
 	@echo "build/$*/validate.log: validation completed."
 
 # -----------------------------------------------------------------------------
