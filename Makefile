@@ -6,8 +6,8 @@ MAKEFLAGS       += --warn-undefined-variables
 SHELL           := /usr/bin/bash
 .SHELLFLAGS     := -euo pipefail -c
 
-.DELETE_ON_ERROR:
 .DEFAULT_GOAL   := all
+.DELETE_ON_ERROR:
 .SECONDARY:
 
 # -----------------------------------------------------------------------------
