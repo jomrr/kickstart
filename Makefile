@@ -72,6 +72,7 @@ $(BUILDDIR)/%.ks: $(HOSTSDIR)/%.ks $(BUILDDIR)/%.ksv \
                   $(PROFILES) $(SNIPPETS) | $(BUILDDIR)/
 	@echo "build/$*.ks: building flattened kickstart."
 	@set -a; . hosts/default.env; \
+		[[ -f hosts/.env ]] && . hosts/.env; \
 		[[ -f hosts/$*.env ]] && . hosts/$*.env; \
 		set +a; \
 		ksflatten -c hosts/$*.ks -v "$$(cat "$(BUILDDIR)/$*.ksv")" | \
