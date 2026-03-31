@@ -80,10 +80,8 @@ $(BUILDDIR)/%.ks: $(HOSTSDIR)/%.ks $(BUILDDIR)/%.ksv \
 	@echo "build/$*.ks: build completed."
 
 # Publish the generated Kickstart file, with optional validation.
-$(DISTDIR)/%.ks: $(BUILDDIR)/%.ks \
-		 $(if $(filter 1,$(VALIDATE)),$(BUILDDIR)/%.ksv) | $(DISTDIR)/
-	@[[ "$(VALIDATE)" != "1" ]] || \
-		ksvalidator -v "$$(cat "$(BUILDDIR)/$*.ksv")" "$<" > /dev/null
+$(DISTDIR)/%.ks: $(BUILDDIR)/%.ks $(if $(filter 1,$(VALIDATE)),$(BUILDDIR)/%.ksv) | $(DISTDIR)/
+	@[[ "$(VALIDATE)" != "1" ]] || ksvalidator -v "$$(cat "$(BUILDDIR)/$*.ksv")" "$<" > /dev/null
 	@cp "$<" "$@"
 	@echo "dist/$*.ks: published successfully."
 
