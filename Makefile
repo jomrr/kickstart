@@ -67,9 +67,9 @@ $(BUILDDIR)/%.ksv: $(HOSTSDIR)/%.ks | $(BUILDDIR)/
 	@echo "build/$*.ksv: version file with $$(cat "$@") generated."
 
 # Generate flattened Kickstart file.
-$(BUILDDIR)/%.ks: $(HOSTSDIR)/%.ks $(BUILDDIR)/%.ksv \
-                  $(HOSTSDIR)/default.env $(wildcard $(HOSTSDIR)/%.env) \
-                  $(PROFILES) $(SNIPPETS) | $(BUILDDIR)/
+KSENV=$(HOSTSDIR)/default.env $(HOSTSDIR)/.env Makefile
+
+$(BUILDDIR)/%.ks: $(HOSTSDIR)/%.ks $(BUILDDIR)/%.ksv $(KSENV) $(wildcard $(HOSTSDIR)/%.env) $(PROFILES) $(SNIPPETS) | $(BUILDDIR)/
 	@echo "build/$*.ks: building flattened kickstart."
 	@set -a; . hosts/default.env; \
 		[[ -f hosts/.env ]] && . hosts/.env; \
@@ -80,7 +80,9 @@ $(BUILDDIR)/%.ks: $(HOSTSDIR)/%.ks $(BUILDDIR)/%.ksv \
 	@echo "build/$*.ks: build completed."
 
 # Publish the generated Kickstart file, with optional validation.
-$(DISTDIR)/%.ks: $(BUILDDIR)/%.ks $(if $(filter 1,$(VALIDATE)),$(BUILDDIR)/%.ksv) | $(DISTDIR)/
+KSVER=$(if $(filter 1,$(VALIDATE)),$(BUILDDIR)/%.ksv)
+
+$(DISTDIR)/%.ks: $(BUILDDIR)/%.ks $(KSVER)  | $(DISTDIR)/
 	@[[ "$(VALIDATE)" != "1" ]] || ksvalidator -v "$$(cat "$(BUILDDIR)/$*.ksv")" "$<" > /dev/null
 	@cp "$<" "$@"
 	@echo "dist/$*.ks: published successfully."

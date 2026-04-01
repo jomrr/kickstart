@@ -18,7 +18,7 @@ set -euo pipefail
 # - Existing crypttab lines are patched in place instead of being rebuilt from
 #   scratch.
 
-PCRS="${KS_TPM2_PCRS:-7}"
+PCRS="${KS_TPM2_PCRS}"
 PASSFILE="/root/.luks-pass"
 TMP_CRYPTTAB=""
 
@@ -45,7 +45,7 @@ for dev in "${LUKS_DEVS[@]}"; do
     systemd-cryptenroll \
         --unlock-key-file="${PASSFILE}" \
         --tpm2-device=auto \
-        --tpm2-pcrs="${PCRS}" \
+        --tpm2-pcrs="${PCRS:-7}" \
         "${dev}"
 done
 
@@ -54,20 +54,20 @@ done
 if [[ -f /etc/crypttab ]]; then
     TMP_CRYPTTAB="$(mktemp /etc/crypttab.XXXXXX)"
 
-    awk -v pcrs="${PCRS}" '
+    awk -v pcrs="${PCRS:-7}" '
         BEGIN { OFS = "\t" }
         /^[[:space:]]*#/ || NF == 0 { print; next }
         {
             opts = $4
 
             if (opts == "" || opts == "-") {
-                opts = "tpm2-device=auto,tpm2-pcrs=" pcrs
+                opts = "tpm2-device=auto,tpm2-measure-pcr=yes"
             } else {
                 if (opts !~ /(^|,)tpm2-device=/) {
                     opts = opts ",tpm2-device=auto"
                 }
-                if (opts !~ /(^|,)tpm2-pcrs=/) {
-                    opts = opts ",tpm2-pcrs=" pcrs
+                if (opts !~ /(^|,)tpm2-measure-pcr=/) {
+                    opts = opts ",tpm2-measure-pcr=yes"
                 }
             }
 
