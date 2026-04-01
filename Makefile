@@ -67,9 +67,9 @@ $(BUILDDIR)/%.ksv: $(HOSTSDIR)/%.ks | $(BUILDDIR)/
 	@echo "build/$*.ksv: version file with $$(cat "$@") generated."
 
 # Generate flattened Kickstart file.
-KSENV=$(HOSTSDIR)/default.env $(HOSTSDIR)/.env Makefile
+KS_DEPS=$(PROFILES) $(SNIPPETS) $(HOSTSDIR)/default.env Makefile
 
-$(BUILDDIR)/%.ks: $(HOSTSDIR)/%.ks $(BUILDDIR)/%.ksv $(KSENV) $(wildcard $(HOSTSDIR)/%.env) $(PROFILES) $(SNIPPETS) | $(BUILDDIR)/
+$(BUILDDIR)/%.ks: $(HOSTSDIR)/%.ks $(BUILDDIR)/%.ksv $(KS_DEPS) $(wildcard $(HOSTSDIR)/%.env) | $(BUILDDIR)/
 	@echo "build/$*.ks: building flattened kickstart."
 	@set -a; . hosts/default.env; \
 		[[ -f hosts/.env ]] && . hosts/.env; \

@@ -12,7 +12,7 @@ part pv.01      --asprimary --ondisk=${KS_INSTALL_DISK} --fstype=lvmpv --size=1 
 
 volgroup system pv.01
 
-logvol btrfs.01 --name=root
+logvol btrfs.01 --name=root --size=20000
 
 # btrfs volumes
 btrfs none --label=rootfs --data=single --metadata=single --mkfsoptions "--nodiscard --compress zstd:3" btrfs.01
