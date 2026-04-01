@@ -12,7 +12,7 @@
 %include snippets/post/tpm/cryptenroll.ks
 
 # storage configuration
-%include snippets/storage/luks-btrfs-grub.ks
+%include snippets/storage/luks-lvm-btrfs-grub.ks
 
 # packages and groups to install/exclude
 %include snippets/packages/fedora-base.ks

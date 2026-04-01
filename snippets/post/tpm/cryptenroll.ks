@@ -80,5 +80,6 @@ if [[ -f /etc/crypttab ]]; then
 fi
 
 # Rebuild initramfs/boot artifacts after TPM enrollment and crypttab updates.
-dracut -f
+kver="$(find /lib/modules -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n1)"
+dracut -f --kver "$kver"
 %end

@@ -12,19 +12,19 @@ part pv.01      --asprimary --ondisk=${KS_INSTALL_DISK} --fstype=lvmpv --size=1 
 
 volgroup system pv.01
 
-logvol btrfs.01 --vgname system --name=root --size=20000
+logvol btrfs.01 --vgname=system --name=root --size=20000
 
 # btrfs volumes
 btrfs none --label=rootfs --data=single --metadata=single --mkfsoptions "--compress zstd:3" btrfs.01
 
 # btrfs subvolumes
-btrfs /                    --subvol --name=@            rootfs
-btrfs /home                --subvol --name=@home        rootfs
-btrfs /opt                 --subvol --name=@opt         rootfs
-btrfs /srv                 --subvol --name=@srv         rootfs
-btrfs /var                 --subvol --name=@var         rootfs
-btrfs /var/log             --subvol --name=@log         rootfs
-btrfs /var/log/audit       --subvol --name=@audit       rootfs
-btrfs /var/spool/mail      --subvol --name=@mail        rootfs
-btrfs /var/tmp             --subvol --name=@tmp         rootfs
-btrfs /var/www             --subvol --name=@www         rootfs
+btrfs /                    --subvol --name=@            LABEL=rootfs
+btrfs /home                --subvol --name=@home        LABEL=rootfs
+btrfs /opt                 --subvol --name=@opt         LABEL=rootfs
+btrfs /srv                 --subvol --name=@srv         LABEL=rootfs
+btrfs /var                 --subvol --name=@var         LABEL=rootfs
+btrfs /var/log             --subvol --name=@log         LABEL=rootfs
+btrfs /var/log/audit       --subvol --name=@audit       LABEL=rootfs
+btrfs /var/spool/mail      --subvol --name=@mail        LABEL=rootfs
+btrfs /var/tmp             --subvol --name=@tmp         LABEL=rootfs
+btrfs /var/www             --subvol --name=@www         LABEL=rootfs
