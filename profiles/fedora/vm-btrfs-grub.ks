@@ -6,6 +6,9 @@
 
 # common kickstart directives
 %include snippets/common.ks
+%include snippets/post/dnf/dnf.ks
+%include snippets/post/dnf/dnf5-automatic.ks
+%include snippets/post/hardening.ks
 
 # storage configuration
 %include snippets/storage/btrfs-grub.ks
