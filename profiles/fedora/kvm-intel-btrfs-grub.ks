@@ -10,6 +10,7 @@
 %include snippets/post/dnf/dnf5-automatic.ks
 %include snippets/post/hardening.ks
 %include snippets/post/kvm/headless.ks
+%include snippets/post/systemd/disable-sleep.ks
 %include snippets/post/tpm/cryptenroll.ks
 
 # packages and groups to install/exclude

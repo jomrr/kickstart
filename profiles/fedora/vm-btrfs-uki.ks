@@ -10,6 +10,7 @@ bootloader --append="console=ttyS0" --nombr --location=none
 %include snippets/post/dnf/dnf.ks
 %include snippets/post/dnf/dnf5-automatic.ks
 %include snippets/post/hardening.ks
+%include snippets/post/systemd/disable-sleep.ks
 
 # storage configuration
 %include snippets/storage/btrfs-uki.ks
