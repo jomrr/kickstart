@@ -6,6 +6,8 @@
 auditd
 bash-completion
 bash-color-prompt
+cracklib
+cracklib-dicts
 firewalld
 libpwquality
 policycoreutils-python-utils
