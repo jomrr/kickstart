@@ -6,6 +6,7 @@
 auditd
 bash-completion
 bash-color-prompt
+clean-rpm-gpg-pubkey
 cracklib
 cracklib-dicts
 firewalld
@@ -14,6 +15,9 @@ policycoreutils-python-utils
 python3-dnf
 python3-libdnf5
 python3-pwquality
+remove-retired-packages
+rpmconf
+symlinks
 vim-default-editor
 zstd
 -ModemManager-*
