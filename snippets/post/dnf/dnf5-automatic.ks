@@ -4,7 +4,7 @@
 %post --interpreter /usr/bin/bash --log=/root/ks-post-dnf5-automatic.log
 dnf install --setopt=install_weak_deps=False -y dnf5-plugin-automatic
 
-cat << EOF > /etc/dnf/dnf5-plugins/automatic.conf
+cat << EOF > /etc/dnf/automatic.conf
 [commands]
 apply_updates = yes
 reboot = when-needed

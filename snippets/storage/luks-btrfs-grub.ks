@@ -6,9 +6,9 @@ ignoredisk --only-use=${KS_INSTALL_DISK}
 clearpart  --all --initlabel --drives=${KS_INSTALL_DISK}
 
 # partitioning schmeme
-part /boot/efi --asprimary --ondisk=${KS_INSTALL_DISK} --fstype=efi   --size=2048   --label=efi  --fsoptions="umask=0077,shortname=winnt"
-part /boot     --asprimary --ondisk=${KS_INSTALL_DISK} --fstype=ext4  --size=2048   --label=boot --fsoptions="noatime,nodev,nosuid"
-part btrfs.01  --asprimary --ondisk=${KS_INSTALL_DISK} --fstype=btrfs --size=1 --grow            --fsoptions="compress=zstd:3,noatime,space_cache=v2" --encrypted --luks-version=luks2 --passphrase=${KS_LUKS_PW}
+part /boot/efi --ondisk=${KS_INSTALL_DISK} --fstype=efi   --size=2048   --label=efi  --fsoptions="umask=0077,shortname=winnt"
+part /boot     --ondisk=${KS_INSTALL_DISK} --fstype=ext4  --size=2048   --label=boot --fsoptions="noatime,nodev,nosuid"
+part btrfs.01  --ondisk=${KS_INSTALL_DISK} --fstype=btrfs --size=1 --grow            --fsoptions="compress=zstd:3,noatime,space_cache=v2" --encrypted --luks-version=luks2 --passphrase=${KS_LUKS_PW}
 
 # btrfs volumes
 btrfs none --label=system --data=single --metadata=single btrfs.01
